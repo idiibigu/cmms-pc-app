@@ -671,11 +671,33 @@ async function viewDocs() {
     + '</div>';
 }
 
+// Attendance — read-only log (clock in/out, late, work-from type). Web's
+// own attendance.php gates the company-wide list behind
+// canViewAllAttendance(); a user without that sees a 403 here the same
+// way they would on the web app trying to view others' records.
+async function viewAttendance() {
+  setCrumb('Attendance');
+  main.innerHTML = '<h2>Attendance</h2><div class="sub">Today\'s clock in/out log</div><div class="state-msg">Loading…</div>';
+  const today = new Date().toISOString().slice(0, 10);
+  const res = await apiCall('/attendance.php?action=list&from=' + today + '&to=' + today);
+  if (res?.error) { main.innerHTML = '<h2>Attendance</h2><div class="error-msg">' + esc(res.error) + '</div>'; return; }
+  const rows = (res.data?.records || []).map((a) => `
+    <tr>
+      <td>${esc(a.user_name)}</td>
+      <td>${esc(a.clock_in_time || '—')}</td>
+      <td>${esc(a.clock_out_time || 'Still in')}</td>
+      <td>${a.late ? '<span class="badge">Late</span>' : ''}</td>
+    </tr>
+  `);
+  main.innerHTML = '<h2>Attendance</h2><div class="sub">Today\'s clock in/out log</div><div id="list"></div>';
+  mountPagedTable(document.getElementById('list'), ['Name', 'Clock In', 'Clock Out', 'Flags'], rows);
+}
+
 const views = {
   dashboard: viewDashboard, equipment: viewEquipment, tasks: viewTasks, categories: viewCategories, projects: viewProjects,
   events: viewEvents, firealarm: viewFireAlarm, meters: viewMeters, warehouse: viewWarehouse,
   checklists: viewChecklists, quotations: viewQuotations, users: viewUsers, notifications: viewNotifications,
-  changelog: viewChangelog, docs: viewDocs,
+  changelog: viewChangelog, docs: viewDocs, attendance: viewAttendance,
 };
 
 navButtons.forEach((btn) => {
