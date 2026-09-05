@@ -14,4 +14,6 @@ contextBridge.exposeInMainWorld('eeisDesktop', {
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   exportAndSave: (apiPath, suggestedName) => ipcRenderer.invoke('export-and-save', { apiPath, suggestedName }),
   pickAndImport: (module, projectId) => ipcRenderer.invoke('pick-and-import', { module, projectId }),
+  pickLogoFile: () => ipcRenderer.invoke('pick-logo-file'),
+  updateBranding: (fields, logoPath) => ipcRenderer.invoke('update-branding', { fields, logoPath }),
 });

@@ -258,6 +258,47 @@ ipcMain.handle('pick-and-import', async (_event, { module, projectId }) => {
   }
 });
 
+// ── Company Settings (branding) ─────────────────────────────────────────
+// api/branding.php's POST only accepts multipart/form-data (it needs to
+// accept an optional logo file), so — unlike the generic JSON api-request
+// handler above — this one builds a FormData body, same technique as
+// pick-and-import above.
+ipcMain.handle('pick-logo-file', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'svg'] }],
+    properties: ['openFile'],
+  });
+  if (canceled || !filePaths[0]) return { canceled: true };
+  return { path: filePaths[0], name: path.basename(filePaths[0]) };
+});
+
+ipcMain.handle('update-branding', async (_event, { fields, logoPath }) => {
+  const appUrl = Store.get('appUrl');
+  const token = Store.get('token');
+  if (!appUrl || !token) return { error: 'Not connected.' };
+  try {
+    const form = new FormData();
+    Object.entries(fields || {}).forEach(([k, v]) => {
+      if (v !== null && v !== undefined) form.append(k, String(v));
+    });
+    if (logoPath) {
+      const buf = fs.readFileSync(logoPath);
+      form.append('logo', new Blob([buf]), path.basename(logoPath));
+    }
+    const res = await fetch(appUrl + '/api/branding.php', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token },
+      body: form,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) { Store.set('token', ''); showLogin(); return { error: 'Session expired. Please log in again.' }; }
+    if (!res.ok) return { error: data.error || ('Save failed (' + res.status + ')') };
+    return { data };
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
 // ── Windows/OS notifications ───────────────────────────────────────────
 // Polls the same unread-notifications endpoint the web app uses; fires a
 // native OS notification only when the unread count goes UP since the

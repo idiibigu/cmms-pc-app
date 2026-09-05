@@ -32,13 +32,28 @@ async function apiCall(path, method, body) {
 // for a simple show/hide (not attempting per-record added/owned scoping
 // client-side — the server still enforces that on write).
 let currentPermissions = {};
+let currentUser = {};
 async function loadPermissions() {
   const res = await apiCall('/auth.php');
   currentPermissions = res.data?.permissions || {};
+  currentUser = res.data?.user || {};
 }
 function can(key) {
   const v = currentPermissions[key];
   return !!v && v !== 'none';
+}
+// Mirrors the web app's requireManageMatrixAccess()/isAdminTierRoleName():
+// Roles & Permissions and Users & Access are gated by role name, not by a
+// togglable permission key.
+function isAdminTier() {
+  if (currentUser.is_superadmin) return true;
+  const r = String(currentUser.role_name || '').toLowerCase();
+  return ['admin', 'administrator', 'app administrator', 'it', 'hr', 'human resources'].includes(r);
+}
+function canManageMatrix() {
+  if (currentUser.is_superadmin) return true;
+  const r = String(currentUser.role_name || '').toLowerCase();
+  return ['admin', 'administrator', 'app administrator'].includes(r);
 }
 
 function setActiveNav(view) {
@@ -336,6 +351,7 @@ async function openProjectDetail(projectId, projectName) {
     { key: 'events', label: `Events (${eventList.length})` },
     { key: 'fire', label: `Fire Alarm (${fireList.length})` },
     { key: 'meters', label: `Meters (${meterList.length})` },
+    { key: 'maps', label: 'Maps' },
   ];
   const panels = {
     overview: `
@@ -352,6 +368,7 @@ async function openProjectDetail(projectId, projectName) {
     events: renderTable(['Title', 'Severity', 'Status'], eventRows),
     fire: renderTable(['Type', 'Location', 'Status'], fireRows),
     meters: renderTable(['Label', 'Type', 'Status'], meterRows),
+    maps: '<div id="pm-map-host"><div class="state-msg">Loading map…</div></div>',
   };
 
   main.innerHTML = '<div class="back-link" id="back-to-projects">&larr; Back to Projects</div>'
@@ -364,7 +381,54 @@ async function openProjectDetail(projectId, projectName) {
     btn.addEventListener('click', () => {
       main.querySelectorAll('.detail-tab-btn').forEach((b) => b.classList.toggle('active', b === btn));
       document.getElementById('detail-tab-panel').innerHTML = panels[btn.dataset.tab];
+      if (btn.dataset.tab === 'maps') mountProjectMaps(projectId);
     });
+  });
+}
+
+// ── Project Maps (world/GPS maps only — see mountProjectMaps note) ──────
+let pmLeafletInstance = null;
+async function mountProjectMaps(projectId) {
+  const host = document.getElementById('pm-map-host');
+  const res = await apiCall('/project_maps.php?action=maps&project_id=' + projectId);
+  const maps = (res?.data?.data || []).filter((m) => m.map_type === 'world');
+  const uploadCount = (res?.data?.data || []).length - maps.length;
+  if (!maps.length) {
+    host.innerHTML = '<div class="pm-no-map">'
+      + (uploadCount
+        ? `This project's ${uploadCount} floor plan(s) are uploaded images/PDFs — open them on the web app to view. The desktop app currently supports GPS/world maps only.`
+        : 'No maps have been added for this project yet.')
+      + '</div>';
+    return;
+  }
+  host.innerHTML = '<div class="pm-map-picker" id="pm-map-picker"></div><div id="pm-leaflet-map"></div>';
+  const picker = document.getElementById('pm-map-picker');
+  maps.forEach((m, i) => {
+    const btn = document.createElement('button');
+    btn.textContent = m.floor_label || m.floor_type || ('Map ' + (i + 1));
+    btn.className = i === 0 ? 'active' : '';
+    btn.addEventListener('click', () => {
+      picker.querySelectorAll('button').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      loadLeafletMap(m);
+    });
+    picker.appendChild(btn);
+  });
+  picker.style.display = maps.length > 1 ? 'flex' : 'none';
+  loadLeafletMap(maps[0]);
+}
+async function loadLeafletMap(map) {
+  const pinsRes = await apiCall('/project_maps.php?action=pins&map_id=' + map.id);
+  const pins = pinsRes?.data?.data || [];
+  if (pmLeafletInstance) { pmLeafletInstance.remove(); pmLeafletInstance = null; }
+  const center = [map.view_lat || 30.0444, map.view_lng || 31.2357];
+  pmLeafletInstance = L.map('pm-leaflet-map').setView(center, map.view_zoom || 15);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap contributors', maxZoom: 19,
+  }).addTo(pmLeafletInstance);
+  pins.filter((p) => p.lat != null && p.lng != null).forEach((p) => {
+    L.marker([p.lat, p.lng]).addTo(pmLeafletInstance)
+      .bindPopup(`<strong>${esc(p.milestone_title || p.label || 'Pin')}</strong>` + (p.equipment_code ? `<br>${esc(p.equipment_code)}` : ''));
   });
 }
 
@@ -693,11 +757,133 @@ async function viewAttendance() {
   mountPagedTable(document.getElementById('list'), ['Name', 'Clock In', 'Clock Out', 'Flags'], rows);
 }
 
+// ── Company Settings (branding) — admin only to save, viewable by all ───
+let pendingLogoPath = null;
+async function viewSettings() {
+  setCrumb('Settings');
+  main.innerHTML = '<h2>Settings</h2><div class="sub">Company branding shown across the web and desktop apps</div><div class="state-msg">Loading…</div>';
+  const res = await apiCall('/branding.php');
+  if (res?.error) { main.innerHTML = '<h2>Settings</h2><div class="error-msg">' + esc(res.error) + '</div>'; return; }
+  const b = res.data?.data || {};
+  pendingLogoPath = null;
+  const canEdit = isAdminTier();
+  const field = (id, label, value, type = 'text') =>
+    `<label for="${id}">${esc(label)}</label><input id="${id}" type="${type}" value="${esc(value || '')}" ${canEdit ? '' : 'disabled'}>`;
+
+  main.innerHTML = `
+    <h2>Settings</h2><div class="sub">Company branding shown across the web and desktop apps</div>
+    <div class="settings-form">
+      <div class="logo-preview">
+        <img id="settings-logo-preview" src="${esc(b.logo_url || '')}" ${b.logo_url ? '' : 'hidden'}>
+        ${canEdit ? '<button class="toolbar-btn" id="btn-choose-logo" type="button" style="padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-size:12.5px;font-weight:600;cursor:pointer;">Choose Logo…</button>' : ''}
+        <span id="settings-logo-name" style="font-size:12px;color:var(--text-sub);"></span>
+      </div>
+      <div class="row2">
+        ${field('set-company-name', 'Company Name', b.company_name)}
+        ${field('set-app-name', 'App Name', b.app_name)}
+      </div>
+      <div class="row2">
+        ${field('set-tagline', 'Tagline', b.tagline)}
+        ${field('set-website', 'Website', b.website)}
+      </div>
+      <div class="row2">
+        ${field('set-phone', 'Phone', b.phone)}
+        ${field('set-email', 'Email', b.email)}
+      </div>
+      ${field('set-address', 'Address', b.address)}
+      <div class="row2">
+        ${field('set-primary-color', 'Primary Color', b.primary_color || '#2563eb', 'color')}
+        ${field('set-accent-color', 'Accent Color', b.accent_color || '#2563eb', 'color')}
+      </div>
+      ${canEdit ? `
+      <div class="save-row">
+        <button class="toolbar-btn primary" id="btn-save-settings" type="button" style="padding:9px 16px;border-radius:8px;border:1px solid var(--accent);background:var(--accent);color:#fff;font-size:13px;font-weight:600;cursor:pointer;">Save Changes</button>
+        <span class="save-msg" id="settings-save-msg" hidden>Saved.</span>
+      </div>` : '<div class="sub" style="margin-top:16px;">Only admins can edit these settings.</div>'}
+    </div>
+  `;
+
+  if (canEdit) {
+    document.getElementById('btn-choose-logo').addEventListener('click', async () => {
+      const r = await window.eeisDesktop.pickLogoFile();
+      if (r?.canceled || !r?.path) return;
+      pendingLogoPath = r.path;
+      document.getElementById('settings-logo-name').textContent = r.name;
+    });
+    document.getElementById('btn-save-settings').addEventListener('click', async () => {
+      const fields = {
+        company_name: document.getElementById('set-company-name').value,
+        app_name: document.getElementById('set-app-name').value,
+        tagline: document.getElementById('set-tagline').value,
+        website: document.getElementById('set-website').value,
+        phone: document.getElementById('set-phone').value,
+        email: document.getElementById('set-email').value,
+        address: document.getElementById('set-address').value,
+        primary_color: document.getElementById('set-primary-color').value,
+        accent_color: document.getElementById('set-accent-color').value,
+      };
+      setLoading(true);
+      const r = await window.eeisDesktop.updateBranding(fields, pendingLogoPath);
+      setLoading(false);
+      const msg = document.getElementById('settings-save-msg');
+      if (r?.error) { alert(r.error); return; }
+      msg.hidden = false;
+      msg.textContent = 'Saved.';
+      loadBranding();
+    });
+  }
+}
+
+// ── Roles & Permissions (admin/superadmin only, mirrors the web's matrix
+// screen — api/roles_permissions.php?action=matrix) ──────────────────────
+async function viewRoles() {
+  setCrumb('Roles & Permissions');
+  if (!canManageMatrix()) {
+    main.innerHTML = '<h2>Roles & Permissions</h2><div class="error-msg">You do not have access to this screen.</div>';
+    return;
+  }
+  main.innerHTML = '<h2>Roles & Permissions</h2><div class="sub">Who can do what across the app</div><div class="state-msg">Loading…</div>';
+  const res = await apiCall('/roles_permissions.php?action=matrix');
+  if (res?.error) { main.innerHTML = '<h2>Roles & Permissions</h2><div class="error-msg">' + esc(res.error) + '</div>'; return; }
+  const { roles = [], groups = [], matrix = {}, types = [] } = res.data || {};
+  if (!roles.length) { main.innerHTML = '<h2>Roles & Permissions</h2><div class="state-msg">No roles found.</div>'; return; }
+
+  const typeOptions = (current) => types.map((t) => `<option value="${esc(t)}" ${t === current ? 'selected' : ''}>${esc(t)}</option>`).join('');
+  let bodyHtml = '';
+  groups.forEach((g) => {
+    bodyHtml += `<tr><td colspan="${roles.length + 1}" class="perm-group-label">${esc(g.label)}</td></tr>`;
+    g.permissions.forEach((p) => {
+      bodyHtml += '<tr><td>' + esc(p.display_name || p.name) + '</td>' + roles.map((r) => {
+        const current = matrix[r.id]?.[p.id] || 'none';
+        return `<td><select data-role="${r.id}" data-perm="${p.id}">${typeOptions(current)}</select></td>`;
+      }).join('') + '</tr>';
+    });
+  });
+
+  main.innerHTML = `
+    <h2>Roles & Permissions</h2><div class="sub">Who can do what across the app — changes save immediately</div>
+    <div class="perm-matrix-wrap">
+      <table class="perm-matrix">
+        <thead><tr><th>Permission</th>${roles.map((r) => `<th>${esc(r.display_name || r.name)}</th>`).join('')}</tr></thead>
+        <tbody>${bodyHtml}</tbody>
+      </table>
+    </div>
+  `;
+  main.querySelectorAll('select[data-role]').forEach((sel) => {
+    sel.addEventListener('change', async () => {
+      const r = await apiCall('/roles_permissions.php?action=set_permission', 'POST', {
+        role_id: Number(sel.dataset.role), permission_id: Number(sel.dataset.perm), type: sel.value,
+      });
+      if (r?.error) alert(r.error);
+    });
+  });
+}
+
 const views = {
   dashboard: viewDashboard, equipment: viewEquipment, tasks: viewTasks, categories: viewCategories, projects: viewProjects,
   events: viewEvents, firealarm: viewFireAlarm, meters: viewMeters, warehouse: viewWarehouse,
   checklists: viewChecklists, quotations: viewQuotations, users: viewUsers, notifications: viewNotifications,
-  changelog: viewChangelog, docs: viewDocs, attendance: viewAttendance,
+  changelog: viewChangelog, docs: viewDocs, attendance: viewAttendance, settings: viewSettings, roles: viewRoles,
 };
 
 navButtons.forEach((btn) => {
@@ -719,10 +905,23 @@ document.getElementById('btn-logout').addEventListener('click', () => {
 (async function bootstrap() {
   await loadBranding();
   await loadPermissions();
+  const rolesBtn = document.querySelector('.nav-btn[data-view="roles"]');
+  if (rolesBtn) rolesBtn.style.display = canManageMatrix() ? '' : 'none';
   viewDashboard();
 })();
 
-window.eeisDesktop.getAppVersion().then((v) => {
+// The label shows the SAME version string as the web app (the latest
+// app_changelog entry, e.g. "v1.4.2") so both surfaces always agree on
+// "what version are we on" — the electron-builder/package.json version
+// is a separate, purely internal build number for the auto-updater and
+// is shown in parentheses, not as "the" app version.
+window.eeisDesktop.getAppVersion().then(async (buildVersion) => {
   const el = document.getElementById('app-version-label');
-  if (el && v) el.textContent = 'App v' + v;
+  if (!el) return;
+  el.textContent = buildVersion ? 'Build ' + buildVersion : '';
+  try {
+    const res = await window.eeisDesktop.api('/changelog.php', 'GET');
+    const latest = res?.data?.data?.[0]?.version;
+    if (latest) el.textContent = latest + (buildVersion ? ' (build ' + buildVersion + ')' : '');
+  } catch (e) { /* offline/unauthenticated at boot — keep build-only label */ }
 });
