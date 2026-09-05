@@ -845,20 +845,57 @@ async function viewWarehouse() {
   loadItems(select.value);
 }
 
+// Full template creation/editing (recurrence rules, assignees) is a
+// bigger UI task left as a known gap — this drills into a template
+// read-only via GET /daily-checklists.php?action=checklist&id=X to at
+// least show its items instead of just the summary row.
 async function viewChecklists() {
-  main.innerHTML = '<h2>Routine Checklists</h2><div class="sub">Active checklist templates across the company</div><div class="state-msg">Loading…</div>';
+  main.innerHTML = '<h2>Routine Checklists</h2><div class="sub">Active checklist templates across the company — click one to see its items</div><div class="state-msg">Loading…</div>';
   const res = await apiCall('/daily-checklists.php?action=checklists_all');
   if (res?.error) { main.innerHTML = '<h2>Routine Checklists</h2><div class="error-msg">' + esc(res.error) + '</div>'; return; }
   const rows = (res.data?.data || []).map((c) => `
-    <tr>
+    <tr class="clickable" data-checklist-id="${esc(c.id)}" data-checklist-title="${esc(c.title_en || c.title_ar)}">
       <td>${esc(c.title_en || c.title_ar)}</td>
       <td><span class="badge">${esc(c.status)}</span></td>
       <td>${esc(c.recurrence_type || '—')}</td>
       <td>${esc(c.recurrence_anchor_date || '—')}</td>
     </tr>
   `);
-  main.innerHTML = '<h2>Routine Checklists</h2><div class="sub">Active checklist templates across the company</div><div id="list"></div>';
-  mountPagedTable(document.getElementById('list'), ['Title', 'Status', 'Frequency', 'Anchor Date'], rows);
+  main.innerHTML = '<h2>Routine Checklists</h2><div class="sub">Active checklist templates across the company — click one to see its items</div><div id="list"></div>';
+  const listEl = document.getElementById('list');
+  mountPagedTable(listEl, ['Title', 'Status', 'Frequency', 'Anchor Date'], rows);
+  listEl.addEventListener('click', (e) => {
+    const tr = e.target.closest('tr[data-checklist-id]');
+    if (tr) openChecklistDetail(tr.dataset.checklistId, tr.dataset.checklistTitle);
+  });
+}
+
+async function openChecklistDetail(id, title) {
+  setActiveNav(null);
+  main.innerHTML = '<div class="back-link" id="back-to-checklists">&larr; Back to Routine Checklists</div>'
+    + '<h2>' + esc(title) + '</h2><div class="sub">Checklist items (read-only — full template editing isn\'t available in the desktop app yet)</div>'
+    + '<div class="state-msg">Loading…</div>';
+  document.getElementById('back-to-checklists').addEventListener('click', () => { setActiveNav('checklists'); viewChecklists(); });
+
+  const res = await apiCall('/daily-checklists.php?action=checklist&id=' + id);
+  if (res?.error) {
+    main.innerHTML = '<div class="back-link" id="back-to-checklists">&larr; Back to Routine Checklists</div><h2>' + esc(title) + '</h2><div class="error-msg">' + esc(res.error) + '</div>';
+    document.getElementById('back-to-checklists').addEventListener('click', () => { setActiveNav('checklists'); viewChecklists(); });
+    return;
+  }
+  const checklist = res.data || {};
+  const items = checklist.items || [];
+  const rows = items.map((it) => `
+    <tr>
+      <td>${esc(it.title_en || it.title_ar || it.label || '—')}</td>
+      <td>${esc(it.check_type || it.type || '—')}</td>
+      <td>${esc(it.required ? 'Yes' : 'No')}</td>
+    </tr>
+  `);
+  main.innerHTML = '<div class="back-link" id="back-to-checklists">&larr; Back to Routine Checklists</div>'
+    + '<h2>' + esc(title) + '</h2><div class="sub">Checklist items (read-only — full template editing isn\'t available in the desktop app yet)</div>'
+    + renderTable(['Item', 'Type', 'Required'], rows);
+  document.getElementById('back-to-checklists').addEventListener('click', () => { setActiveNav('checklists'); viewChecklists(); });
 }
 
 async function viewQuotations() {
