@@ -198,6 +198,8 @@ ipcMain.handle('set-window-icon', async (_event, logoUrl) => {
   }
 });
 
+ipcMain.handle('get-app-version', () => app.getVersion());
+
 ipcMain.handle('logout', async () => {
   Store.set('token', '');
   showLogin();

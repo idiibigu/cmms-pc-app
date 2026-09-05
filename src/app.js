@@ -135,37 +135,66 @@ async function openProjectDetail(projectId, projectName) {
     window.eeisDesktop.api('/utility-meters.php?action=meters&project_id=' + projectId),
   ]);
 
-  const section = (title, headers, rows) => `
-    <div class="section-block">
-      <h3>${esc(title)} (${rows.length})</h3>
-      ${renderTable(headers, rows)}
-    </div>
-  `;
+  const eqList = eq.data?.data || [];
+  const taskList = tasks.data?.data || [];
+  const eventList = events.data?.data || [];
+  const fireList = fire.data?.data || [];
+  const meterList = meters.data?.data || [];
+  const openTasks = taskList.filter((t) => !/complete/i.test(t.status || '')).length;
 
-  const eqRows = (eq.data?.data || []).map((m) => `
+  const eqRows = eqList.map((m) => `
     <tr><td>${esc(m.milestone_title)}</td><td><span class="badge">${esc(m.status)}</span></td><td>${esc(m.equipment_code || '—')}</td></tr>
   `);
-  const taskRows = (tasks.data?.data || []).map((t) => `
+  const taskRows = taskList.map((t) => `
     <tr><td>${esc(t.heading)}</td><td><span class="badge">${esc(t.status)}</span></td><td>${esc(t.priority || '—')}</td></tr>
   `);
-  const eventRows = (events.data?.data || []).map((ev) => `
+  const eventRows = eventList.map((ev) => `
     <tr><td>${esc(ev.title)}</td><td><span class="badge">${esc(ev.severity)}</span></td><td><span class="badge">${esc(ev.status)}</span></td></tr>
   `);
-  const fireRows = (fire.data?.data || []).map((f) => `
+  const fireRows = fireList.map((f) => `
     <tr><td>${esc(f.alarm_type)}</td><td>${esc(f.location_area || '—')}</td><td><span class="badge">${esc(f.status)}</span></td></tr>
   `);
-  const meterRows = (meters.data?.data || []).map((m) => `
+  const meterRows = meterList.map((m) => `
     <tr><td>${esc(m.label)}</td><td><span class="badge">${esc(m.meter_type)}</span></td><td>${m.is_active ? 'Active' : 'Inactive'}</td></tr>
   `);
 
+  const tabs = [
+    { key: 'overview', label: 'Overview' },
+    { key: 'equipment', label: `Equipment (${eqList.length})` },
+    { key: 'tasks', label: `Work Orders (${taskList.length})` },
+    { key: 'events', label: `Events (${eventList.length})` },
+    { key: 'fire', label: `Fire Alarm (${fireList.length})` },
+    { key: 'meters', label: `Meters (${meterList.length})` },
+  ];
+  const panels = {
+    overview: `
+      <div class="kpi-row">
+        <div class="kpi"><div class="lbl">Equipment</div><div class="val">${eqList.length}</div></div>
+        <div class="kpi"><div class="lbl">Open Work Orders</div><div class="val">${openTasks}</div></div>
+        <div class="kpi"><div class="lbl">Open Events</div><div class="val">${eventList.filter((e) => e.status === 'open').length}</div></div>
+        <div class="kpi"><div class="lbl">Active Meters</div><div class="val">${meterList.filter((m) => m.is_active).length}</div></div>
+      </div>
+      <div class="sub">Use the tabs above to see the full list for each area.</div>
+    `,
+    equipment: renderTable(['Title', 'Status', 'Code'], eqRows),
+    tasks: renderTable(['Title', 'Status', 'Priority'], taskRows),
+    events: renderTable(['Title', 'Severity', 'Status'], eventRows),
+    fire: renderTable(['Type', 'Location', 'Status'], fireRows),
+    meters: renderTable(['Label', 'Type', 'Status'], meterRows),
+  };
+
   main.innerHTML = '<div class="back-link" id="back-to-projects">&larr; Back to Projects</div>'
     + '<h2>' + esc(projectName) + '</h2><div class="sub">Everything linked to this project</div>'
-    + section('Equipment', ['Title', 'Status', 'Code'], eqRows)
-    + section('Work Orders', ['Title', 'Status', 'Priority'], taskRows)
-    + section('Project Events', ['Title', 'Severity', 'Status'], eventRows)
-    + section('Fire Alarm', ['Type', 'Location', 'Status'], fireRows)
-    + section('Utility Meters', ['Label', 'Type', 'Status'], meterRows);
+    + '<div class="detail-tabs">' + tabs.map((t, i) => `<button class="detail-tab-btn${i === 0 ? ' active' : ''}" data-tab="${t.key}">${esc(t.label)}</button>`).join('') + '</div>'
+    + '<div id="detail-tab-panel">' + panels.overview + '</div>';
+
   document.getElementById('back-to-projects').addEventListener('click', () => { setActiveNav('projects'); viewProjects(); });
+  main.querySelectorAll('.detail-tab-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      main.querySelectorAll('.detail-tab-btn').forEach((b) => b.classList.toggle('active', b === btn));
+      document.getElementById('detail-tab-panel').innerHTML = panels[btn.dataset.tab];
+    });
+  });
 }
 
 async function viewEvents() {
@@ -318,10 +347,57 @@ async function viewNotifications() {
     renderTable(['Title', 'Body', 'Module', 'Received'], rows);
 }
 
+// "What's New" — the same app_changelog entries the web app's Changelog
+// screen shows (api/changelog.php, admin-only server-side).
+async function viewChangelog() {
+  setCrumb("What's New");
+  main.innerHTML = "<h2>What's New</h2><div class=\"sub\">Release history for your company's app</div><div class=\"state-msg\">Loading…</div>";
+  const res = await window.eeisDesktop.api('/changelog.php');
+  if (res?.error) { main.innerHTML = "<h2>What's New</h2><div class=\"error-msg\">" + esc(res.error) + '</div>'; return; }
+  const entries = res.data?.data || [];
+  if (!entries.length) { main.innerHTML = "<h2>What's New</h2><div class=\"state-msg\">No release notes yet.</div>"; return; }
+  const html = entries.map((e) => `
+    <div class="changelog-entry">
+      <span class="ver">${esc(e.version)}</span><span class="date">${esc(e.release_date || '')}</span>
+      <h4>${esc(e.title_en || e.title_ar || '')}</h4>
+      <ul>${(e.items_en || []).map((item) => `<li>${esc(item)}</li>`).join('')}</ul>
+    </div>
+  `).join('');
+  main.innerHTML = "<h2>What's New</h2><div class=\"sub\">Release history for your company's app</div>" + html;
+}
+
+// Built-in help for the desktop app itself — a short guide per screen,
+// written for this app specifically (not pulled from the web app's much
+// larger Knowledge Base, which is hardcoded client-side content in
+// js/knowledge-base.js, not served by any API — duplicating all of it
+// here would be a separate, much bigger content task).
+async function viewDocs() {
+  setCrumb('Documentation');
+  const sections = [
+    ['Dashboard', 'A live snapshot of your company: total equipment, open and total work orders, and active projects.'],
+    ['Equipment', 'Every asset registered across all projects, with its status and equipment code.'],
+    ['Work Orders', 'All work orders company-wide. Click "Projects" and open a project to see just that project\'s work orders instead.'],
+    ['Projects', 'Click any project to open it — a tabbed view shows its Equipment, Work Orders, Events, Fire Alarm reports, and Utility Meters together.'],
+    ['Project Events', 'Urgent notes reported on any project, with severity and status.'],
+    ['Fire Alarm', 'Panel events reported across the company (smoke, heat, fire, fault, etc.).'],
+    ['Utility Meters', 'Water/electricity/gas meters registered per project, and whether each is active.'],
+    ['Warehouse', 'Pick a project from the dropdown to see its stock items.'],
+    ['Routine Checklists', 'Active inspection checklist templates and how often each repeats.'],
+    ['Quotations', 'All price quotations issued, with client, project, status, and total.'],
+    ['Users', 'Everyone with access to your company, their role, and your plan\'s seat usage.'],
+    ['Notifications', 'Your most recent alerts, unread ones marked with a dot.'],
+    ["What's New", 'Release notes for the web app your company uses.'],
+  ];
+  main.innerHTML = '<h2>Documentation</h2><div class="sub">A quick guide to each screen in this app</div><div class="doc-body">'
+    + sections.map(([title, body]) => `<h3>${esc(title)}</h3><div>${esc(body)}</div>`).join('')
+    + '</div>';
+}
+
 const views = {
   dashboard: viewDashboard, equipment: viewEquipment, tasks: viewTasks, projects: viewProjects,
   events: viewEvents, firealarm: viewFireAlarm, meters: viewMeters, warehouse: viewWarehouse,
   checklists: viewChecklists, quotations: viewQuotations, users: viewUsers, notifications: viewNotifications,
+  changelog: viewChangelog, docs: viewDocs,
 };
 
 navButtons.forEach((btn) => {
@@ -342,3 +418,8 @@ document.getElementById('btn-logout').addEventListener('click', () => {
 
 loadBranding();
 viewDashboard();
+
+window.eeisDesktop.getAppVersion().then((v) => {
+  const el = document.getElementById('app-version-label');
+  if (el && v) el.textContent = 'App v' + v;
+});
