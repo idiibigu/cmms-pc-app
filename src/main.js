@@ -329,6 +329,51 @@ ipcMain.handle('update-branding', async (_event, { fields, logoPath }) => {
   }
 });
 
+// ── Generic file picker (extensions configurable per caller) ────────────
+// Used anywhere a screen needs to let the user choose a local file before
+// uploading it via a dedicated multipart handler (see fire-alarm-report
+// below) — kept generic instead of hardcoding to images like
+// pick-logo-file, since Fire Alarm's screenshot upload needed the same
+// dialog with different filters.
+ipcMain.handle('pick-file', async (_event, { extensions, label } = {}) => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    filters: [{ name: label || 'Files', extensions: extensions && extensions.length ? extensions : ['*'] }],
+    properties: ['openFile'],
+  });
+  if (canceled || !filePaths[0]) return { canceled: true };
+  return { path: filePaths[0], name: path.basename(filePaths[0]) };
+});
+
+// ── Fire Alarm: report event (multipart — screenshot is a required file,
+// api/fire-alarm.php's action=report) ───────────────────────────────────
+ipcMain.handle('fire-alarm-report', async (_event, { fields, filePath }) => {
+  const appUrl = Store.get('appUrl');
+  const token = Store.get('token');
+  if (!appUrl || !token) return { error: 'Not connected.' };
+  try {
+    const form = new FormData();
+    form.append('action', 'report');
+    Object.entries(fields || {}).forEach(([k, v]) => {
+      if (v !== null && v !== undefined && v !== '') form.append(k, String(v));
+    });
+    if (filePath) {
+      const buf = fs.readFileSync(filePath);
+      form.append('screenshot', new Blob([buf]), path.basename(filePath));
+    }
+    const res = await fetch(appUrl + '/api/fire-alarm.php', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token },
+      body: form,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) { Store.set('token', ''); showLogin(); return { error: 'Session expired. Please log in again.' }; }
+    if (!res.ok) return { error: data.error || ('Report failed (' + res.status + ')') };
+    return { data };
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
 // ── Windows/OS notifications ───────────────────────────────────────────
 // Polls the same unread-notifications endpoint the web app uses; fires a
 // native OS notification only when the unread count goes UP since the

@@ -16,4 +16,6 @@ contextBridge.exposeInMainWorld('eeisDesktop', {
   pickAndImport: (module, projectId) => ipcRenderer.invoke('pick-and-import', { module, projectId }),
   pickLogoFile: () => ipcRenderer.invoke('pick-logo-file'),
   updateBranding: (fields, logoPath) => ipcRenderer.invoke('update-branding', { fields, logoPath }),
+  pickFile: (extensions, label) => ipcRenderer.invoke('pick-file', { extensions, label }),
+  fireAlarmReport: (fields, filePath) => ipcRenderer.invoke('fire-alarm-report', { fields, filePath }),
 });

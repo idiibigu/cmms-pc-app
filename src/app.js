@@ -619,20 +619,81 @@ async function viewEvents() {
   mountPagedTable(document.getElementById('list'), ['Title', 'Severity', 'Status', 'Project'], rows);
 }
 
+const FIRE_ALARM_TYPES = ['smoke', 'heat', 'fire', 'fault', 'tamper', 'other'];
+const FIRE_ALARM_SEVERITIES = ['normal', 'urgent', 'critical'];
+const FIRE_ALARM_DEPARTMENTS = ['security', 'control_room', 'civil_defense', 'safety'];
+
 async function viewFireAlarm() {
   main.innerHTML = '<h2>Fire Alarm</h2><div class="sub">Panel events reported across the company</div><div class="state-msg">Loading…</div>';
   const res = await apiCall('/fire-alarm.php?action=list');
   if (res?.error) { main.innerHTML = '<h2>Fire Alarm</h2><div class="error-msg">' + esc(res.error) + '</div>'; return; }
-  const rows = (res.data?.data || []).map((f) => `
+  const events = res.data?.data || [];
+
+  const canReport = can('report_fire_alarm');
+  const canManage = can('manage_fire_alarm');
+
+  const rows = events.map((f) => `
     <tr>
       <td>${esc(f.alarm_type)}</td>
       <td>${esc(f.location_area || f.equipment_title || '—')}</td>
       <td><span class="badge">${esc(f.severity)}</span></td>
       <td><span class="badge">${esc(f.status)}</span></td>
+      <td>
+        ${canManage && !['converted_to_wo', 'dismissed'].includes(f.status) ? `<button class="btn-resolve-fa" data-id="${esc(f.id)}">Resolve</button> <button class="btn-dismiss-fa" data-id="${esc(f.id)}">Dismiss</button>` : ''}
+      </td>
     </tr>
   `);
-  main.innerHTML = '<h2>Fire Alarm</h2><div class="sub">Panel events reported across the company</div><div id="list"></div>';
-  mountPagedTable(document.getElementById('list'), ['Type', 'Location', 'Severity', 'Status'], rows);
+  const toolbar = canReport ? '<div class="toolbar"><button id="btn-report-fa" class="primary">+ Report Event</button></div>' : '';
+  main.innerHTML = '<h2>Fire Alarm</h2><div class="sub">Panel events reported across the company</div>' + toolbar + '<div id="list"></div>';
+  mountPagedTable(document.getElementById('list'), ['Type', 'Location', 'Severity', 'Status', 'Actions'], rows);
+
+  document.getElementById('btn-report-fa')?.addEventListener('click', () => {
+    let pendingScreenshotPath = null;
+    const wrap = openModal('Report Fire Alarm Event', `
+      <label>Alarm Type</label>
+      <select name="alarm_type">${FIRE_ALARM_TYPES.map((t) => `<option value="${t}">${t[0].toUpperCase() + t.slice(1)}</option>`).join('')}</select>
+      <label>Severity</label>
+      <select name="severity">${FIRE_ALARM_SEVERITIES.map((s) => `<option value="${s}" ${s === 'urgent' ? 'selected' : ''}>${s[0].toUpperCase() + s.slice(1)}</option>`).join('')}</select>
+      <label>Location / Area</label><input name="location_area">
+      <label>Department to Notify</label>
+      <select name="department">${FIRE_ALARM_DEPARTMENTS.map((d) => `<option value="${d}">${d.replace('_', ' ')}</option>`).join('')}</select>
+      <label>Contact Name (required)</label><input name="contact_name" required>
+      <label>Description</label><input name="description">
+      <label>Panel Screenshot (required)</label>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button type="button" id="fa-choose-screenshot" style="padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface);cursor:pointer;">Choose File…</button>
+        <span id="fa-screenshot-name" style="font-size:12px;color:var(--text-sub);"></span>
+      </div>
+    `, async (data) => {
+      if (!pendingScreenshotPath) throw new Error('A panel screenshot is required');
+      const r = await window.eeisDesktop.fireAlarmReport(data, pendingScreenshotPath);
+      if (r?.error) throw new Error(r.error);
+      viewFireAlarm();
+    });
+    wrap.querySelector('#fa-choose-screenshot').addEventListener('click', async () => {
+      const r = await window.eeisDesktop.pickFile(['jpg', 'jpeg', 'png', 'webp'], 'Images');
+      if (r?.canceled || !r?.path) return;
+      pendingScreenshotPath = r.path;
+      wrap.querySelector('#fa-screenshot-name').textContent = r.name;
+    });
+  });
+
+  main.querySelectorAll('.btn-resolve-fa').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Mark this fire alarm event as resolved?')) return;
+      const r = await apiCall('/fire-alarm.php', 'POST', { action: 'resolve', id: Number(btn.dataset.id) });
+      if (r?.error) { alert('Failed: ' + r.error); return; }
+      viewFireAlarm();
+    });
+  });
+  main.querySelectorAll('.btn-dismiss-fa').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Dismiss this fire alarm event?')) return;
+      const r = await apiCall('/fire-alarm.php', 'POST', { action: 'dismiss', id: Number(btn.dataset.id) });
+      if (r?.error) { alert('Failed: ' + r.error); return; }
+      viewFireAlarm();
+    });
+  });
 }
 
 const METER_TYPES = ['water', 'electricity', 'gas', 'other'];
