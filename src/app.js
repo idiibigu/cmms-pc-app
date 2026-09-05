@@ -778,19 +778,68 @@ async function viewWarehouse() {
     <div id="wh-items"><div class="state-msg">Select a project above.</div></div>
   `;
   const select = document.getElementById('wh-project-select');
+  const canManage = can('manage_warehouse') || can('add_project_milestones');
+  const WH_TYPES = ['material', 'equipment', 'tool'];
+
+  const itemFormFields = (it = {}) => `
+    <label>Name</label><input name="name" value="${esc(it.name || '')}" required>
+    <label>Type</label>
+    <select name="type">${WH_TYPES.map((t) => `<option value="${t}" ${(it.type || 'material') === t ? 'selected' : ''}>${t[0].toUpperCase() + t.slice(1)}</option>`).join('')}</select>
+    <label>Quantity</label><input name="quantity" type="number" step="any" value="${esc(it.quantity ?? 0)}">
+    <label>Unit</label><input name="unit" value="${esc(it.unit || '')}">
+    <label>Description</label><input name="description" value="${esc(it.description || '')}">
+  `;
+
   const loadItems = async (projectId) => {
     document.getElementById('wh-items').innerHTML = '<div class="state-msg">Loading…</div>';
     const itemsRes = await apiCall('/warehouse.php?action=warehouse_items&project_id=' + projectId);
     if (itemsRes?.error) { document.getElementById('wh-items').innerHTML = '<div class="error-msg">' + esc(itemsRes.error) + '</div>'; return; }
-    const rows = (itemsRes.data?.data || []).map((it) => `
+    const items = itemsRes.data?.data || [];
+    const rows = items.map((it) => `
       <tr>
         <td>${esc(it.name)}</td>
         <td><span class="badge">${esc(it.type)}</span></td>
         <td>${esc(it.quantity)} ${esc(it.unit || '')}</td>
         <td>${esc(it.description || '—')}</td>
+        <td>
+          ${canManage ? `<button class="btn-edit-wh" data-id="${esc(it.id)}">Edit</button> <button class="btn-delete-wh" data-id="${esc(it.id)}">Delete</button>` : ''}
+        </td>
       </tr>
     `);
-    document.getElementById('wh-items').innerHTML = renderTable(['Item', 'Type', 'Quantity', 'Description'], rows);
+    const toolbar = canManage ? '<div class="toolbar"><button id="btn-add-wh" class="primary">+ Add Stock Item</button></div>' : '';
+    document.getElementById('wh-items').innerHTML = toolbar + renderTable(['Item', 'Type', 'Quantity', 'Description', 'Actions'], rows);
+
+    document.getElementById('btn-add-wh')?.addEventListener('click', () => {
+      openModal('Add Stock Item', itemFormFields(), async (data) => {
+        const r = await apiCall('/warehouse.php?action=warehouse_item', 'POST', {
+          project_id: Number(projectId), name: data.name, type: data.type,
+          quantity: Number(data.quantity) || 0, unit: data.unit, description: data.description,
+        });
+        if (r?.error) throw new Error(r.error);
+        loadItems(projectId);
+      });
+    });
+    document.querySelectorAll('.btn-edit-wh').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const it = items.find((x) => String(x.id) === btn.dataset.id);
+        if (!it) return;
+        openModal('Edit Stock Item', itemFormFields(it), async (data) => {
+          const r = await apiCall('/warehouse.php?action=warehouse_item&id=' + btn.dataset.id, 'PUT', {
+            name: data.name, type: data.type, quantity: Number(data.quantity) || 0, unit: data.unit, description: data.description,
+          });
+          if (r?.error) throw new Error(r.error);
+          loadItems(projectId);
+        });
+      });
+    });
+    document.querySelectorAll('.btn-delete-wh').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('Delete this stock item?')) return;
+        const r = await apiCall('/warehouse.php?action=warehouse_item&id=' + btn.dataset.id, 'DELETE');
+        if (r?.error) { alert('Delete failed: ' + r.error); return; }
+        loadItems(projectId);
+      });
+    });
   };
   select.addEventListener('change', () => loadItems(select.value));
   loadItems(select.value);
