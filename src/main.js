@@ -1,14 +1,18 @@
 // EEIS Desktop — Electron main process.
 //
-// Phase 1: ask for the company's app URL (https:// only) once, then load
-// the real web app in this window and let it handle login/session exactly
-// as it does in a browser tab — no separate auth code here. Electron's
-// default persistent session partition keeps cookies/localStorage across
-// restarts the same way a browser profile would, so the web app's own
-// "remember me" behavior just works. See
-// .claude/skills/eeis-desktop-app/SKILL.md in the main project repo for
-// the full plan and the reasoning behind this approach.
-
+// Revised direction (see .claude/skills/eeis-desktop-app/SKILL.md): the
+// desktop app has its OWN native-styled screens (login, dashboard,
+// equipment, work orders, projects), not an embedded copy of the web
+// pages. It reads/writes the exact same data by calling the same JSON
+// APIs the web app already uses (api/*.php) — no new backend endpoints,
+// no duplicated business logic, just a different renderer on top.
+//
+// Auth: api/config.php's getTokenFromRequest() already accepts a plain
+// "Authorization: Bearer <token>" header (its 3rd/4th fallback, after
+// cookies) — see api/config.php around getTokenFromRequest(). That means
+// this desktop app needs no cookie jar at all: log in once via
+// POST /api/auth.php, keep the returned token, and send it as a Bearer
+// header on every request after that.
 const { app, BrowserWindow, ipcMain, net, Menu } = require('electron');
 const path = require('path');
 const Store = require('./store');
@@ -19,14 +23,26 @@ function showUrlPrompt() {
   if (mainWindow) mainWindow.loadFile(path.join(__dirname, 'url-prompt.html'));
 }
 
+function showLogin() {
+  if (mainWindow) mainWindow.loadFile(path.join(__dirname, 'login.html'));
+}
+
+function showApp() {
+  if (mainWindow) mainWindow.loadFile(path.join(__dirname, 'app.html'));
+}
+
 function buildMenu() {
   const template = [
     {
-      label: 'EEIS',
+      label: 'idiibi CMMS',
       submenu: [
         {
           label: 'Change Server…',
-          click: () => { Store.set('appUrl', ''); showUrlPrompt(); },
+          click: () => { Store.set('appUrl', ''); Store.set('token', ''); showUrlPrompt(); },
+        },
+        {
+          label: 'Log Out',
+          click: () => { Store.set('token', ''); showLogin(); },
         },
         { type: 'separator' },
         { role: 'quit' },
@@ -54,16 +70,17 @@ function createWindow() {
   });
 
   const savedUrl = Store.get('appUrl');
-  if (savedUrl) {
-    mainWindow.loadURL(savedUrl);
+  const savedToken = Store.get('token');
+  if (savedUrl && savedToken) {
+    showApp();
+  } else if (savedUrl) {
+    showLogin();
   } else {
-    mainWindow.loadFile(path.join(__dirname, 'url-prompt.html'));
+    showUrlPrompt();
   }
 }
 
-// Reachability check for the URL-entry screen — a plain GET so a typo'd or
-// unreachable address is caught before it's saved, rather than silently
-// saving a dead URL and reloading into a blank/error window.
+// ── URL-entry screen ────────────────────────────────────────────────────
 ipcMain.handle('check-app-url', async (_event, url) => {
   return new Promise((resolve) => {
     const request = net.request({ method: 'GET', url });
@@ -79,8 +96,84 @@ ipcMain.handle('check-app-url', async (_event, url) => {
 
 ipcMain.handle('save-app-url-and-load', async (_event, url) => {
   Store.set('appUrl', url);
-  if (mainWindow) mainWindow.loadURL(url);
+  showLogin();
   return true;
+});
+
+// Public — the login screen shows the company's logo/name before anyone is
+// authenticated, exactly like the web login page does (api/branding.php's
+// GET action is intentionally public for this reason).
+ipcMain.handle('get-public-branding', async () => {
+  const appUrl = Store.get('appUrl');
+  if (!appUrl) return { error: 'No server configured.' };
+  try {
+    const res = await fetch(appUrl + '/api/branding.php');
+    const data = await res.json().catch(() => ({}));
+    return { data: data.data || data };
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
+// ── Native login ─────────────────────────────────────────────────────────
+ipcMain.handle('auth-login', async (_event, { username, password }) => {
+  const appUrl = Store.get('appUrl');
+  if (!appUrl) return { error: 'No server configured.' };
+  try {
+    const res = await fetch(appUrl + '/api/auth.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.token) {
+      return { error: data.error || 'Login failed.' };
+    }
+    Store.set('token', data.token);
+    showApp();
+    return { success: true, user: data.user };
+  } catch (e) {
+    return { error: 'Could not reach the server: ' + e.message };
+  }
+});
+
+ipcMain.handle('logout', async () => {
+  Store.set('token', '');
+  showLogin();
+  return true;
+});
+
+// ── Generic authenticated API call for the app screens ──────────────────
+// path is a bare "/xxx.php?..." string (matching js/app.js's API.request
+// convention) — never a full URL, so the renderer can never be tricked
+// into pointing this at an arbitrary host.
+ipcMain.handle('api-request', async (_event, { path: apiPath, method, body }) => {
+  const appUrl = Store.get('appUrl');
+  const token = Store.get('token');
+  if (!appUrl || !token) return { error: 'Not connected.' };
+  if (typeof apiPath !== 'string' || !apiPath.startsWith('/')) {
+    return { error: 'Invalid request path.' };
+  }
+  try {
+    const res = await fetch(appUrl + '/api' + apiPath, {
+      method: method || 'GET',
+      headers: {
+        'Authorization': 'Bearer ' + token,
+        'Content-Type': 'application/json',
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) {
+      Store.set('token', '');
+      showLogin();
+      return { error: 'Session expired. Please log in again.' };
+    }
+    if (!res.ok) return { error: data.error || ('Request failed (' + res.status + ')') };
+    return { data };
+  } catch (e) {
+    return { error: 'Network error: ' + e.message };
+  }
 });
 
 app.whenReady().then(() => {

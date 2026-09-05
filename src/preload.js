@@ -1,12 +1,13 @@
-// Context-isolated bridge between the url-prompt renderer and the main
-// process. The real web app, once loaded, is NOT given this bridge —
-// it runs as plain web content exactly like it does in a browser tab, per
-// the "wrap, don't rebuild" decision in .claude/skills/eeis-desktop-app/
-// SKILL.md: no custom auth/session code, just the same app the browser
-// already serves.
+// Context-isolated bridge between every renderer page and the main
+// process. Renderer pages never talk to the server directly — all HTTP
+// happens in main.js, which is the only place that knows the auth token.
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('eeisDesktop', {
   checkAppUrl: (url) => ipcRenderer.invoke('check-app-url', url),
   saveAppUrlAndLoad: (url) => ipcRenderer.invoke('save-app-url-and-load', url),
+  login: (username, password) => ipcRenderer.invoke('auth-login', { username, password }),
+  getPublicBranding: () => ipcRenderer.invoke('get-public-branding'),
+  logout: () => ipcRenderer.invoke('logout'),
+  api: (path, method, body) => ipcRenderer.invoke('api-request', { path, method, body }),
 });
