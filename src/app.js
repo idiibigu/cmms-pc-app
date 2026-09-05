@@ -898,12 +898,16 @@ async function openChecklistDetail(id, title) {
   document.getElementById('back-to-checklists').addEventListener('click', () => { setActiveNav('checklists'); viewChecklists(); });
 }
 
+// Detail view only — full quotation creation needs a line-item builder
+// (product picker, quantities, VAT/currency) that's a bigger UI task and
+// is left as a known gap; api/quotations.php's action=create takes a
+// full items array plus client/project fields not worth half-implementing.
 async function viewQuotations() {
-  main.innerHTML = '<h2>Quotations</h2><div class="sub">All price quotations issued</div><div class="state-msg">Loading…</div>';
+  main.innerHTML = '<h2>Quotations</h2><div class="sub">All price quotations issued — click one for details</div><div class="state-msg">Loading…</div>';
   const res = await apiCall('/quotations.php?action=list');
   if (res?.error) { main.innerHTML = '<h2>Quotations</h2><div class="error-msg">' + esc(res.error) + '</div>'; return; }
   const rows = (res.data?.quotations || []).map((q) => `
-    <tr>
+    <tr class="clickable" data-quotation-id="${esc(q.id)}" data-quotation-number="${esc(q.quotation_number)}">
       <td>${esc(q.quotation_number)}</td>
       <td>${esc(q.client_name || '—')}</td>
       <td>${esc(q.project_name || '—')}</td>
@@ -911,8 +915,51 @@ async function viewQuotations() {
       <td>${esc(Number(q.total || 0).toLocaleString())}</td>
     </tr>
   `);
-  main.innerHTML = '<h2>Quotations</h2><div class="sub">All price quotations issued</div><div id="list"></div>';
-  mountPagedTable(document.getElementById('list'), ['#', 'Client', 'Project', 'Status', 'Total'], rows);
+  main.innerHTML = '<h2>Quotations</h2><div class="sub">All price quotations issued — click one for details</div><div id="list"></div>';
+  const listEl = document.getElementById('list');
+  mountPagedTable(listEl, ['#', 'Client', 'Project', 'Status', 'Total'], rows);
+  listEl.addEventListener('click', (e) => {
+    const tr = e.target.closest('tr[data-quotation-id]');
+    if (tr) openQuotationDetail(tr.dataset.quotationId, tr.dataset.quotationNumber);
+  });
+}
+
+async function openQuotationDetail(id, number) {
+  setActiveNav(null);
+  main.innerHTML = '<div class="back-link" id="back-to-quotations">&larr; Back to Quotations</div>'
+    + '<h2>Quotation ' + esc(number) + '</h2><div class="state-msg">Loading…</div>';
+  document.getElementById('back-to-quotations').addEventListener('click', () => { setActiveNav('quotations'); viewQuotations(); });
+
+  const res = await apiCall('/quotations.php?action=get&id=' + id);
+  const backHtml = '<div class="back-link" id="back-to-quotations">&larr; Back to Quotations</div>';
+  if (res?.error) {
+    main.innerHTML = backHtml + '<h2>Quotation ' + esc(number) + '</h2><div class="error-msg">' + esc(res.error) + '</div>';
+    document.getElementById('back-to-quotations').addEventListener('click', () => { setActiveNav('quotations'); viewQuotations(); });
+    return;
+  }
+  const q = res.data?.quotation || {};
+  const items = res.data?.items || [];
+  const itemRows = items.map((it) => `
+    <tr>
+      <td>${esc(it.item_name)}</td>
+      <td>${esc(it.quantity)} ${esc(it.unit || '')}</td>
+      <td>${esc(Number(it.unit_price || 0).toLocaleString())}</td>
+      <td>${esc(Number(it.line_total || 0).toLocaleString())}</td>
+    </tr>
+  `);
+  main.innerHTML = backHtml + `
+    <h2>Quotation ${esc(number)}</h2>
+    <div class="kpi-row">
+      <div class="kpi"><div class="lbl">Client</div><div class="val" style="font-size:16px;">${esc(q.client_name || '—')}</div></div>
+      <div class="kpi"><div class="lbl">Status</div><div class="val" style="font-size:16px;"><span class="badge">${esc(q.status)}</span></div></div>
+      <div class="kpi"><div class="lbl">Total</div><div class="val">${esc(Number(q.total || 0).toLocaleString())} ${esc(q.currency || '')}</div></div>
+    </div>
+    <div class="sub">Project: ${esc(q.project_name || '—')} &middot; Date: ${esc(q.quotation_date || '—')} &middot; Valid Until: ${esc(q.valid_until || '—')}</div>
+    <h3 style="margin-top:20px;">Line Items</h3>
+    ${renderTable(['Item', 'Qty', 'Unit Price', 'Line Total'], itemRows)}
+    ${q.notes ? `<div class="sub" style="margin-top:12px;">Notes: ${esc(q.notes)}</div>` : ''}
+  `;
+  document.getElementById('back-to-quotations').addEventListener('click', () => { setActiveNav('quotations'); viewQuotations(); });
 }
 
 // ── Modal helper — a small reusable dialog with form fields, used by every
