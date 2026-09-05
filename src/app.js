@@ -186,13 +186,79 @@ async function viewTasks() {
       <td>${esc(t.heading)}</td>
       <td><span class="badge">${esc(t.status)}</span></td>
       <td>${esc(t.priority || '—')}</td>
+      <td>${esc(t.category_name || '—')}</td>
       <td>${esc(t.due_date || '—')}</td>
     </tr>
   `);
   main.innerHTML = '<h2>Work Orders</h2><div class="sub">Every work order across all projects</div>'
     + ioToolbarHtml('tasks') + '<div id="list"></div>';
-  mountPagedTable(document.getElementById('list'), ['Title', 'Status', 'Priority', 'Due Date'], rows);
+  mountPagedTable(document.getElementById('list'), ['Title', 'Status', 'Priority', 'Category', 'Due Date'], rows);
   wireIoToolbar(viewTasks);
+}
+
+// Work Order Categories — full CRUD (add/edit/delete), gated on the same
+// add_tasks/edit_tasks/delete_tasks permissions api/task_categories.php
+// enforces server-side. Deleting a category only detaches it from tasks
+// that used it — never deletes the tasks themselves.
+async function viewCategories() {
+  setCrumb('WO Categories');
+  main.innerHTML = '<h2>Work Order Categories</h2><div class="sub">Group work orders by type</div><div class="state-msg">Loading…</div>';
+  const res = await apiCall('/task_categories.php');
+  if (res?.error) { main.innerHTML = '<h2>Work Order Categories</h2><div class="error-msg">' + esc(res.error) + '</div>'; return; }
+  const categories = res.data?.data || [];
+
+  const canAdd = can('add_tasks');
+  const canEdit = can('edit_tasks');
+  const canDelete = can('delete_tasks');
+
+  const rows = categories.map((c) => `
+    <tr>
+      <td>${esc(c.name_en)}</td>
+      <td>${esc(c.name_ar || '—')}</td>
+      <td>${esc(c.task_count)}</td>
+      <td>
+        ${canEdit ? `<button class="btn-edit-cat" data-id="${esc(c.id)}" data-en="${esc(c.name_en)}" data-ar="${esc(c.name_ar || '')}">Edit</button>` : ''}
+        ${canDelete ? `<button class="btn-delete-cat" data-id="${esc(c.id)}">Delete</button>` : ''}
+      </td>
+    </tr>
+  `);
+  const toolbar = canAdd ? '<div class="toolbar"><button id="btn-add-cat" class="primary">+ Add Category</button></div>' : '';
+
+  main.innerHTML = '<h2>Work Order Categories</h2><div class="sub">Group work orders by type</div>' + toolbar + '<div id="list"></div>';
+  mountPagedTable(document.getElementById('list'), ['English Name', 'Arabic Name', 'Work Orders Using It', 'Actions'], rows);
+
+  document.getElementById('btn-add-cat')?.addEventListener('click', () => {
+    openModal('Add Category', `
+      <label>English Name</label><input name="name_en" required>
+      <label>Arabic Name (optional)</label><input name="name_ar">
+    `, async (data) => {
+      const r = await apiCall('/task_categories.php', 'POST', { name_en: data.name_en, name_ar: data.name_ar });
+      if (r?.error) throw new Error(r.error);
+      viewCategories();
+    });
+  });
+
+  main.querySelectorAll('.btn-edit-cat').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      openModal('Edit Category', `
+        <label>English Name</label><input name="name_en" value="${esc(btn.dataset.en)}" required>
+        <label>Arabic Name (optional)</label><input name="name_ar" value="${esc(btn.dataset.ar)}">
+      `, async (data) => {
+        const r = await apiCall('/task_categories.php?id=' + btn.dataset.id, 'PUT', { name_en: data.name_en, name_ar: data.name_ar });
+        if (r?.error) throw new Error(r.error);
+        viewCategories();
+      });
+    });
+  });
+
+  main.querySelectorAll('.btn-delete-cat').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Delete this category? Work orders using it will just lose the category, not be deleted.')) return;
+      const r = await apiCall('/task_categories.php?id=' + btn.dataset.id, 'DELETE');
+      if (r?.error) { alert('Delete failed: ' + r.error); return; }
+      viewCategories();
+    });
+  });
 }
 
 async function viewProjects() {
@@ -606,7 +672,7 @@ async function viewDocs() {
 }
 
 const views = {
-  dashboard: viewDashboard, equipment: viewEquipment, tasks: viewTasks, projects: viewProjects,
+  dashboard: viewDashboard, equipment: viewEquipment, tasks: viewTasks, categories: viewCategories, projects: viewProjects,
   events: viewEvents, firealarm: viewFireAlarm, meters: viewMeters, warehouse: viewWarehouse,
   checklists: viewChecklists, quotations: viewQuotations, users: viewUsers, notifications: viewNotifications,
   changelog: viewChangelog, docs: viewDocs,
