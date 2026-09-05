@@ -1,4 +1,4 @@
-# EEIS Desktop (cmms-pc-app)
+# idiibi cmms Desktop (cmms-pc-app)
 
 Electron shell around the existing EEIS CMMS web app (the main `cmms eeis` project — this repo is intentionally separate from that project's manual-deploy workflow).
 
