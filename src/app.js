@@ -172,23 +172,114 @@ function wireIoToolbar(onDone) {
   });
 }
 
+// Equipment = a project_milestones row (title/project/dates/status) + a 1:1
+// cmms_equipment_meta row (equipment_code/category/serial/building/sector/
+// floor/other_details) saved separately via /cmms.php?action=equipment_meta
+// — see api/milestones.php (base record) and api/cmms.php (meta upsert).
 async function viewEquipment() {
   setCrumb('Equipment');
   main.innerHTML = '<h2>Equipment</h2><div class="sub">Every asset registered in the company</div><div class="state-msg">Loading…</div>';
-  const res = await apiCall('/milestones.php');
+  const [res, projectsRes, categoriesRes] = await Promise.all([
+    apiCall('/milestones.php'),
+    apiCall('/projects.php'),
+    apiCall('/equipment_categories.php'),
+  ]);
   if (res?.error) { main.innerHTML = '<h2>Equipment</h2><div class="error-msg">' + esc(res.error) + '</div>'; return; }
-  const rows = (res.data?.data || []).map((m) => `
+  const equipment = res.data?.data || [];
+  const projects = projectsRes.data?.data || [];
+  const categories = categoriesRes.data?.data || [];
+
+  const canAdd = can('add_project_milestones');
+  const canEdit = can('edit_project_milestones');
+  const canDelete = can('delete_project_milestones');
+
+  const rows = equipment.map((m) => `
     <tr>
       <td>${esc(m.milestone_title)}</td>
       <td><span class="badge">${esc(m.status)}</span></td>
       <td>${esc(m.project_label || m.project_id)}</td>
       <td>${esc(m.equipment_code || '—')}</td>
+      <td>
+        ${canEdit ? `<button class="btn-edit-eq" data-id="${esc(m.id)}">Edit</button>` : ''}
+        ${canDelete ? `<button class="btn-delete-eq" data-id="${esc(m.id)}">Delete</button>` : ''}
+      </td>
     </tr>
   `);
+  const toolbar = (canAdd ? '<button id="btn-add-eq" class="primary">+ Add Equipment</button>' : '');
   main.innerHTML = '<h2>Equipment</h2><div class="sub">Every asset registered in the company</div>'
+    + (toolbar ? '<div class="toolbar">' + toolbar + '</div>' : '')
     + ioToolbarHtml('milestones') + '<div id="list"></div>';
-  mountPagedTable(document.getElementById('list'), ['Title', 'Status', 'Project', 'Code'], rows);
+  mountPagedTable(document.getElementById('list'), ['Title', 'Status', 'Project', 'Code', 'Actions'], rows);
   wireIoToolbar(viewEquipment);
+
+  const projectOptions = (selected) => projects.map((p) => `<option value="${esc(p.id)}" ${String(p.id) === String(selected) ? 'selected' : ''}>${esc(p.project_name)}</option>`).join('');
+  const categoryOptions = (selected) => categories.map((c) => `<option value="${esc(c.slug)}" ${c.slug === selected ? 'selected' : ''}>${esc(c.name_en)}</option>`).join('');
+
+  const equipmentFormFields = (m = {}) => `
+    <label>Equipment Name</label><input name="equipment_name" value="${esc(m.milestone_title || '')}" required>
+    <label>Project</label><select name="project_id" required>${projectOptions(m.project_id)}</select>
+    <label>Status</label>
+    <select name="status">
+      <option value="incomplete" ${(m.status || 'incomplete') === 'incomplete' ? 'selected' : ''}>Incomplete</option>
+      <option value="complete" ${m.status === 'complete' ? 'selected' : ''}>Complete</option>
+    </select>
+    <label>Equipment Code</label><input name="equipment_code" value="${esc(m.equipment_code || '')}">
+    <label>Category</label><select name="category">${categoryOptions(m.equipment_category)}</select>
+    <label>Serial Number</label><input name="serial_number" value="${esc(m.serial_number || '')}">
+    <label>Building Number</label><input name="building_number" value="${esc(m.building_number || '')}">
+    <label>Sector/Location</label><input name="sector_location" value="${esc(m.sector_location || '')}">
+    <label>Floor</label><input name="floor" value="${esc(m.floor || '')}">
+    <label>Other Details</label><input name="other_details" value="${esc(m.other_details || '')}">
+  `;
+
+  const saveEquipmentMeta = async (milestoneId, data) => {
+    const r = await apiCall('/cmms.php?action=equipment_meta', 'POST', {
+      milestone_id: milestoneId,
+      equipment_code: data.equipment_code,
+      category: data.category,
+      serial_number: data.serial_number,
+      building_number: data.building_number,
+      sector_location: data.sector_location,
+      floor: data.floor,
+      other_details: data.other_details,
+    });
+    if (r?.error) throw new Error(r.error);
+  };
+
+  document.getElementById('btn-add-eq')?.addEventListener('click', () => {
+    openModal('Add Equipment', equipmentFormFields(), async (data) => {
+      const r = await apiCall('/milestones.php', 'POST', {
+        equipment_name: data.equipment_name, project_id: Number(data.project_id), status: data.status,
+      });
+      if (r?.error) throw new Error(r.error);
+      await saveEquipmentMeta(r.data.id, data);
+      viewEquipment();
+    });
+  });
+
+  main.querySelectorAll('.btn-edit-eq').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const m = equipment.find((e) => String(e.id) === btn.dataset.id);
+      if (!m) return;
+      openModal('Edit Equipment', equipmentFormFields(m), async (data) => {
+        const r = await apiCall('/milestones.php?id=' + btn.dataset.id, 'PUT', {
+          equipment_name: data.equipment_name, project_id: Number(data.project_id), status: data.status,
+        });
+        if (r?.error) throw new Error(r.error);
+        await saveEquipmentMeta(Number(btn.dataset.id), data);
+        viewEquipment();
+      });
+    });
+  });
+
+  main.querySelectorAll('.btn-delete-eq').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Delete this equipment record? This cannot be undone.')) return;
+      const r = await apiCall('/milestones.php?id=' + btn.dataset.id, 'DELETE');
+      if (r?.error) { alert('Delete failed: ' + r.error); return; }
+      viewEquipment();
+    });
+  });
 }
 
 async function viewTasks() {
