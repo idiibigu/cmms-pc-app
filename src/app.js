@@ -105,7 +105,91 @@ async function viewProjects() {
     renderTable(['Name', 'Status', 'Start', 'Deadline'], rows);
 }
 
-const views = { dashboard: viewDashboard, equipment: viewEquipment, tasks: viewTasks, projects: viewProjects };
+async function viewEvents() {
+  main.innerHTML = '<h2>Project Events</h2><div class="sub">Urgent notes reported on any project</div><div class="state-msg">Loading…</div>';
+  const res = await window.eeisDesktop.api('/events.php?action=list');
+  if (res?.error) { main.innerHTML = '<h2>Project Events</h2><div class="error-msg">' + esc(res.error) + '</div>'; return; }
+  const rows = (res.data?.data || []).map((ev) => `
+    <tr>
+      <td>${esc(ev.title)}</td>
+      <td><span class="badge">${esc(ev.severity)}</span></td>
+      <td><span class="badge">${esc(ev.status)}</span></td>
+      <td>${esc(ev.project_title || ev.project_id)}</td>
+    </tr>
+  `);
+  main.innerHTML = '<h2>Project Events</h2><div class="sub">Urgent notes reported on any project</div>' +
+    renderTable(['Title', 'Severity', 'Status', 'Project'], rows);
+}
+
+async function viewFireAlarm() {
+  main.innerHTML = '<h2>Fire Alarm</h2><div class="sub">Panel events reported across the company</div><div class="state-msg">Loading…</div>';
+  const res = await window.eeisDesktop.api('/fire-alarm.php?action=list');
+  if (res?.error) { main.innerHTML = '<h2>Fire Alarm</h2><div class="error-msg">' + esc(res.error) + '</div>'; return; }
+  const rows = (res.data?.data || []).map((f) => `
+    <tr>
+      <td>${esc(f.alarm_type)}</td>
+      <td>${esc(f.location_area || f.equipment_title || '—')}</td>
+      <td><span class="badge">${esc(f.severity)}</span></td>
+      <td><span class="badge">${esc(f.status)}</span></td>
+    </tr>
+  `);
+  main.innerHTML = '<h2>Fire Alarm</h2><div class="sub">Panel events reported across the company</div>' +
+    renderTable(['Type', 'Location', 'Severity', 'Status'], rows);
+}
+
+async function viewMeters() {
+  main.innerHTML = '<h2>Utility Meters</h2><div class="sub">Water/electricity/gas meters registered</div><div class="state-msg">Loading…</div>';
+  const res = await window.eeisDesktop.api('/utility-meters.php?action=meters');
+  if (res?.error) { main.innerHTML = '<h2>Utility Meters</h2><div class="error-msg">' + esc(res.error) + '</div>'; return; }
+  const rows = (res.data?.data || []).map((m) => `
+    <tr>
+      <td>${esc(m.label)}</td>
+      <td><span class="badge">${esc(m.meter_type)}</span></td>
+      <td>${esc(m.project_title || m.project_id || '—')}</td>
+      <td>${m.is_active ? 'Active' : 'Inactive'}</td>
+    </tr>
+  `);
+  main.innerHTML = '<h2>Utility Meters</h2><div class="sub">Water/electricity/gas meters registered</div>' +
+    renderTable(['Label', 'Type', 'Project', 'Status'], rows);
+}
+
+async function viewWarehouse() {
+  main.innerHTML = '<h2>Warehouse</h2><div class="sub">Pick a project to see its stock</div><div class="state-msg">Loading…</div>';
+  const res = await window.eeisDesktop.api('/warehouse.php?action=projects');
+  if (res?.error) { main.innerHTML = '<h2>Warehouse</h2><div class="error-msg">' + esc(res.error) + '</div>'; return; }
+  const projectList = res.data?.data || [];
+  if (!projectList.length) { main.innerHTML = '<h2>Warehouse</h2><div class="state-msg">No projects found.</div>'; return; }
+
+  const options = projectList.map((p) => `<option value="${esc(p.id)}">${esc(p.title)} (${p.warehouse_item_count ?? 0} items)</option>`).join('');
+  main.innerHTML = `
+    <h2>Warehouse</h2>
+    <div class="sub">Pick a project to see its stock</div>
+    <select id="wh-project-select" style="padding:8px 12px;border-radius:8px;border:1px solid #cbd5e1;margin-bottom:16px;min-width:280px;">${options}</select>
+    <div id="wh-items"><div class="state-msg">Select a project above.</div></div>
+  `;
+  const select = document.getElementById('wh-project-select');
+  const loadItems = async (projectId) => {
+    document.getElementById('wh-items').innerHTML = '<div class="state-msg">Loading…</div>';
+    const itemsRes = await window.eeisDesktop.api('/warehouse.php?action=warehouse_items&project_id=' + projectId);
+    if (itemsRes?.error) { document.getElementById('wh-items').innerHTML = '<div class="error-msg">' + esc(itemsRes.error) + '</div>'; return; }
+    const rows = (itemsRes.data?.data || []).map((it) => `
+      <tr>
+        <td>${esc(it.name)}</td>
+        <td><span class="badge">${esc(it.type)}</span></td>
+        <td>${esc(it.quantity)} ${esc(it.unit || '')}</td>
+        <td>${esc(it.description || '—')}</td>
+      </tr>
+    `);
+    document.getElementById('wh-items').innerHTML = renderTable(['Item', 'Type', 'Quantity', 'Description'], rows);
+  };
+  select.addEventListener('change', () => loadItems(select.value));
+  loadItems(select.value);
+}
+
+const views = {
+  dashboard: viewDashboard, equipment: viewEquipment, tasks: viewTasks, projects: viewProjects,
+  events: viewEvents, firealarm: viewFireAlarm, meters: viewMeters, warehouse: viewWarehouse,
+};
 
 navButtons.forEach((btn) => {
   btn.addEventListener('click', () => {
