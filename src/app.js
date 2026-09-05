@@ -186,9 +186,79 @@ async function viewWarehouse() {
   loadItems(select.value);
 }
 
+async function viewChecklists() {
+  main.innerHTML = '<h2>Routine Checklists</h2><div class="sub">Active checklist templates across the company</div><div class="state-msg">Loading…</div>';
+  const res = await window.eeisDesktop.api('/daily-checklists.php?action=checklists_all');
+  if (res?.error) { main.innerHTML = '<h2>Routine Checklists</h2><div class="error-msg">' + esc(res.error) + '</div>'; return; }
+  const rows = (res.data?.data || []).map((c) => `
+    <tr>
+      <td>${esc(c.title_en || c.title_ar)}</td>
+      <td><span class="badge">${esc(c.status)}</span></td>
+      <td>${esc(c.recurrence_type || '—')}</td>
+      <td>${esc(c.recurrence_anchor_date || '—')}</td>
+    </tr>
+  `);
+  main.innerHTML = '<h2>Routine Checklists</h2><div class="sub">Active checklist templates across the company</div>' +
+    renderTable(['Title', 'Status', 'Frequency', 'Anchor Date'], rows);
+}
+
+async function viewQuotations() {
+  main.innerHTML = '<h2>Quotations</h2><div class="sub">All price quotations issued</div><div class="state-msg">Loading…</div>';
+  const res = await window.eeisDesktop.api('/quotations.php?action=list');
+  if (res?.error) { main.innerHTML = '<h2>Quotations</h2><div class="error-msg">' + esc(res.error) + '</div>'; return; }
+  const rows = (res.data?.quotations || []).map((q) => `
+    <tr>
+      <td>${esc(q.quotation_number)}</td>
+      <td>${esc(q.client_name || '—')}</td>
+      <td>${esc(q.project_name || '—')}</td>
+      <td><span class="badge">${esc(q.status)}</span></td>
+      <td>${esc(Number(q.total || 0).toLocaleString())}</td>
+    </tr>
+  `);
+  main.innerHTML = '<h2>Quotations</h2><div class="sub">All price quotations issued</div>' +
+    renderTable(['#', 'Client', 'Project', 'Status', 'Total'], rows);
+}
+
+async function viewUsers() {
+  main.innerHTML = '<h2>Users</h2><div class="sub">Everyone with access to this company</div><div class="state-msg">Loading…</div>';
+  const res = await window.eeisDesktop.api('/roles_permissions.php?action=users');
+  if (res?.error) { main.innerHTML = '<h2>Users</h2><div class="error-msg">' + esc(res.error) + '</div>'; return; }
+  const limit = res.data?.limit;
+  const rows = (res.data?.users || []).map((u) => `
+    <tr>
+      <td>${esc(u.name)}</td>
+      <td>${esc(u.email)}</td>
+      <td>${esc(u.role_display_name || u.role_name || '—')}</td>
+      <td><span class="badge">${esc(u.status)}</span></td>
+    </tr>
+  `);
+  const seatLine = limit?.max_users
+    ? `<div class="sub">Seats used: ${limit.current_users} / ${limit.max_users} (${esc(limit.plan_name || '')})</div>`
+    : '';
+  main.innerHTML = '<h2>Users</h2><div class="sub">Everyone with access to this company</div>' + seatLine +
+    renderTable(['Name', 'Email', 'Role', 'Status'], rows);
+}
+
+async function viewNotifications() {
+  main.innerHTML = '<h2>Notifications</h2><div class="sub">Your most recent alerts</div><div class="state-msg">Loading…</div>';
+  const res = await window.eeisDesktop.api('/notifications.php?limit=50');
+  if (res?.error) { main.innerHTML = '<h2>Notifications</h2><div class="error-msg">' + esc(res.error) + '</div>'; return; }
+  const rows = (res.data?.data || []).map((n) => `
+    <tr>
+      <td>${n.read ? '' : '<strong>●</strong> '}${esc(n.title)}</td>
+      <td>${esc(n.body || '—')}</td>
+      <td>${esc(n.module || '—')}</td>
+      <td>${esc(n.created_at || '—')}</td>
+    </tr>
+  `);
+  main.innerHTML = '<h2>Notifications</h2><div class="sub">Your most recent alerts (' + (res.data?.unread_count ?? 0) + ' unread)</div>' +
+    renderTable(['Title', 'Body', 'Module', 'Received'], rows);
+}
+
 const views = {
   dashboard: viewDashboard, equipment: viewEquipment, tasks: viewTasks, projects: viewProjects,
   events: viewEvents, firealarm: viewFireAlarm, meters: viewMeters, warehouse: viewWarehouse,
+  checklists: viewChecklists, quotations: viewQuotations, users: viewUsers, notifications: viewNotifications,
 };
 
 navButtons.forEach((btn) => {
