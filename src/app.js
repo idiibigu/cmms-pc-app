@@ -464,20 +464,71 @@ async function viewFireAlarm() {
   mountPagedTable(document.getElementById('list'), ['Type', 'Location', 'Severity', 'Status'], rows);
 }
 
+const METER_TYPES = ['water', 'electricity', 'gas', 'other'];
+function meterTypeOptions(current) {
+  return METER_TYPES.map((t) => `<option value="${t}" ${t === current ? 'selected' : ''}>${t[0].toUpperCase() + t.slice(1)}</option>`).join('');
+}
 async function viewMeters() {
+  setCrumb('Utility Meters');
   main.innerHTML = '<h2>Utility Meters</h2><div class="sub">Water/electricity/gas meters registered</div><div class="state-msg">Loading…</div>';
   const res = await apiCall('/utility-meters.php?action=meters');
   if (res?.error) { main.innerHTML = '<h2>Utility Meters</h2><div class="error-msg">' + esc(res.error) + '</div>'; return; }
-  const rows = (res.data?.data || []).map((m) => `
+  const meters = res.data?.data || [];
+  const canManage = can('manage_utility_meters');
+
+  const rows = meters.map((m) => `
     <tr>
       <td>${esc(m.label)}</td>
       <td><span class="badge">${esc(m.meter_type)}</span></td>
       <td>${esc(m.project_title || m.project_id || '—')}</td>
       <td>${m.is_active ? 'Active' : 'Inactive'}</td>
+      <td>
+        ${canManage ? `<button class="btn-edit-meter" data-id="${esc(m.id)}" data-label="${esc(m.label)}" data-type="${esc(m.meter_type)}" data-serial="${esc(m.serial_number || '')}" data-unit="${esc(m.unit || '')}" data-location="${esc(m.location_note || '')}">Edit</button>` : ''}
+        ${canManage && m.is_active ? `<button class="btn-deactivate-meter" data-id="${esc(m.id)}">Deactivate</button>` : ''}
+      </td>
     </tr>
   `);
-  main.innerHTML = '<h2>Utility Meters</h2><div class="sub">Water/electricity/gas meters registered</div><div id="list"></div>';
-  mountPagedTable(document.getElementById('list'), ['Label', 'Type', 'Project', 'Status'], rows);
+  const toolbar = canManage ? '<div class="toolbar"><button id="btn-add-meter" class="primary">+ Add Meter</button></div>' : '';
+  main.innerHTML = '<h2>Utility Meters</h2><div class="sub">Water/electricity/gas meters registered</div>' + toolbar + '<div id="list"></div>';
+  mountPagedTable(document.getElementById('list'), ['Label', 'Type', 'Project', 'Status', 'Actions'], rows);
+
+  const meterFormFields = (m = {}) => `
+    <label>Label</label><input name="label" value="${esc(m.label || '')}" required>
+    <label>Type</label><select name="meter_type">${meterTypeOptions(m.meter_type || 'water')}</select>
+    <label>Serial Number</label><input name="serial_number" value="${esc(m.serial_number || '')}">
+    <label>Unit</label><input name="unit" value="${esc(m.unit || '')}" placeholder="e.g. m3, kWh">
+    <label>Location Note</label><input name="location_note" value="${esc(m.location_note || '')}">
+  `;
+
+  document.getElementById('btn-add-meter')?.addEventListener('click', () => {
+    openModal('Add Meter', meterFormFields(), async (data) => {
+      const r = await apiCall('/utility-meters.php', 'POST', { action: 'create_meter', ...data });
+      if (r?.error) throw new Error(r.error);
+      viewMeters();
+    });
+  });
+
+  main.querySelectorAll('.btn-edit-meter').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      openModal('Edit Meter', meterFormFields({
+        label: btn.dataset.label, meter_type: btn.dataset.type, serial_number: btn.dataset.serial,
+        unit: btn.dataset.unit, location_note: btn.dataset.location,
+      }), async (data) => {
+        const r = await apiCall('/utility-meters.php', 'POST', { action: 'update_meter', id: Number(btn.dataset.id), ...data });
+        if (r?.error) throw new Error(r.error);
+        viewMeters();
+      });
+    });
+  });
+
+  main.querySelectorAll('.btn-deactivate-meter').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Deactivate this meter?')) return;
+      const r = await apiCall('/utility-meters.php', 'POST', { action: 'deactivate_meter', id: Number(btn.dataset.id) });
+      if (r?.error) { alert('Failed: ' + r.error); return; }
+      viewMeters();
+    });
+  });
 }
 
 async function viewWarehouse() {

@@ -13,7 +13,7 @@
 // this desktop app needs no cookie jar at all: log in once via
 // POST /api/auth.php, keep the returned token, and send it as a Bearer
 // header on every request after that.
-const { app, BrowserWindow, ipcMain, net, Menu, dialog, nativeImage, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, net, Menu, dialog, nativeImage, Notification, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { autoUpdater } = require('electron-updater');
@@ -31,9 +31,26 @@ let mainWindow = null;
 // AND creates/updates the GitHub Release electron-updater checks against.
 // Does nothing during `npm start` (unpackaged dev runs) since autoUpdater
 // requires an actual packaged app.
+// Logs every autoUpdater event (not just errors) to a plain text file in
+// userData, since the only other place these show up is a dialog the user
+// has to screenshot for us — with no server access to this app's users'
+// machines, this log is the only way to get a real error instead of
+// guessing at fixes.
+const updateLogPath = () => path.join(app.getPath('userData'), 'update.log');
+function logUpdate(line) {
+  try {
+    fs.appendFileSync(updateLogPath(), `[${new Date().toISOString()}] ${line}\n`);
+  } catch (_) { /* best-effort */ }
+}
+
 function initAutoUpdater() {
   autoUpdater.autoDownload = true;
+  autoUpdater.on('checking-for-update', () => logUpdate('checking-for-update'));
+  autoUpdater.on('update-available', (info) => logUpdate('update-available: ' + info.version));
+  autoUpdater.on('update-not-available', (info) => logUpdate('update-not-available (current: ' + info.version + ')'));
+  autoUpdater.on('download-progress', (p) => logUpdate('download-progress: ' + Math.round(p.percent) + '%'));
   autoUpdater.on('update-downloaded', (info) => {
+    logUpdate('update-downloaded: ' + info.version);
     dialog.showMessageBox(mainWindow, {
       type: 'info',
       title: 'Update ready',
@@ -44,10 +61,13 @@ function initAutoUpdater() {
     });
   });
   autoUpdater.on('error', (err) => {
-    console.error('Auto-update error:', err.message);
+    logUpdate('ERROR: ' + (err.stack || err.message));
   });
-  autoUpdater.checkForUpdates().catch(() => {
-    // Silent — most likely just a dev/unpackaged run or no internet.
+  autoUpdater.checkForUpdates().catch((e) => {
+    logUpdate('checkForUpdates() rejected: ' + (e.stack || e.message));
+    // Silent on the initial auto-check — most likely just a dev/unpackaged
+    // run or no internet. The menu's manual "Check for Updates…" still
+    // surfaces the error to the user (see buildMenu below).
   });
 }
 
@@ -81,9 +101,19 @@ function buildMenu() {
           label: 'Check for Updates…',
           click: () => {
             autoUpdater.checkForUpdates().catch((e) => {
-              dialog.showMessageBox(mainWindow, { type: 'error', message: 'Could not check for updates: ' + e.message });
+              logUpdate('Manual check failed: ' + (e.stack || e.message));
+              dialog.showMessageBox(mainWindow, {
+                type: 'error',
+                title: 'Could not check for updates',
+                message: e.message || String(e),
+                detail: 'Full details were saved to:\n' + updateLogPath(),
+              });
             });
           },
+        },
+        {
+          label: 'Open Update Log…',
+          click: () => { shell.showItemInFolder(updateLogPath()); },
         },
         { type: 'separator' },
         { role: 'quit' },
