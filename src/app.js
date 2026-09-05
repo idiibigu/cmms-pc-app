@@ -605,18 +605,74 @@ async function loadLeafletMap(map) {
 
 async function viewEvents() {
   main.innerHTML = '<h2>Project Events</h2><div class="sub">Urgent notes reported on any project</div><div class="state-msg">Loading…</div>';
-  const res = await apiCall('/events.php?action=list');
+  const [res, projectsRes, milestonesRes] = await Promise.all([
+    apiCall('/events.php?action=list'),
+    apiCall('/projects.php'),
+    apiCall('/milestones.php'),
+  ]);
   if (res?.error) { main.innerHTML = '<h2>Project Events</h2><div class="error-msg">' + esc(res.error) + '</div>'; return; }
-  const rows = (res.data?.data || []).map((ev) => `
+  const events = res.data?.data || [];
+  const projects = projectsRes.data?.data || [];
+  const milestones = milestonesRes.data?.data || [];
+
+  const canReport = can('add_events');
+  const canConvert = can('convert_events');
+
+  const rows = events.map((ev) => `
     <tr>
       <td>${esc(ev.title)}</td>
       <td><span class="badge">${esc(ev.severity)}</span></td>
       <td><span class="badge">${esc(ev.status)}</span></td>
       <td>${esc(ev.project_title || ev.project_id)}</td>
+      <td>
+        ${canConvert && ev.status === 'open' ? `<button class="btn-convert-ev" data-id="${esc(ev.id)}">Convert to WO</button> <button class="btn-dismiss-ev" data-id="${esc(ev.id)}">Dismiss</button>` : ''}
+      </td>
     </tr>
   `);
-  main.innerHTML = '<h2>Project Events</h2><div class="sub">Urgent notes reported on any project</div><div id="list"></div>';
-  mountPagedTable(document.getElementById('list'), ['Title', 'Severity', 'Status', 'Project'], rows);
+  const toolbar = canReport ? '<div class="toolbar"><button id="btn-report-ev" class="primary">+ Report Event</button></div>' : '';
+  main.innerHTML = '<h2>Project Events</h2><div class="sub">Urgent notes reported on any project</div>' + toolbar + '<div id="list"></div>';
+  mountPagedTable(document.getElementById('list'), ['Title', 'Severity', 'Status', 'Project', 'Actions'], rows);
+
+  const projectOptions = projects.map((p) => `<option value="${esc(p.id)}">${esc(p.project_name)}</option>`).join('');
+  const milestoneOptions = '<option value="">—</option>' + milestones.map((m) => `<option value="${esc(m.id)}">${esc(m.milestone_title)}</option>`).join('');
+
+  document.getElementById('btn-report-ev')?.addEventListener('click', () => {
+    openModal('Report Event', `
+      <label>Project</label><select name="project_id" required>${projectOptions}</select>
+      <label>Equipment (optional)</label><select name="milestone_id">${milestoneOptions}</select>
+      <label>Title</label><input name="title" required>
+      <label>Description</label><input name="description">
+      <label>Severity</label>
+      <select name="severity">
+        <option value="urgent" selected>Urgent</option>
+        <option value="note">Note</option>
+      </select>
+    `, async (data) => {
+      const r = await apiCall('/events.php', 'POST', {
+        action: 'report', project_id: Number(data.project_id), milestone_id: data.milestone_id ? Number(data.milestone_id) : null,
+        title: data.title, description: data.description, severity: data.severity,
+      });
+      if (r?.error) throw new Error(r.error);
+      viewEvents();
+    });
+  });
+
+  main.querySelectorAll('.btn-convert-ev').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Convert this event into a work order?')) return;
+      const r = await apiCall('/events.php', 'POST', { action: 'convert', id: Number(btn.dataset.id) });
+      if (r?.error) { alert('Failed: ' + r.error); return; }
+      viewEvents();
+    });
+  });
+  main.querySelectorAll('.btn-dismiss-ev').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Dismiss this event?')) return;
+      const r = await apiCall('/events.php', 'POST', { action: 'dismiss', id: Number(btn.dataset.id) });
+      if (r?.error) { alert('Failed: ' + r.error); return; }
+      viewEvents();
+    });
+  });
 }
 
 const FIRE_ALARM_TYPES = ['smoke', 'heat', 'fire', 'fault', 'tamper', 'other'];
