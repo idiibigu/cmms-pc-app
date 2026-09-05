@@ -31,6 +31,10 @@
   .nav-btn.active { background: var(--accent); color: #fff; }
   #sidebar .spacer { flex: 1; }
 
+  #loading-bar { position: fixed; top: 0; left: 232px; right: 0; height: 3px; z-index: 999; background: transparent; pointer-events: none; }
+  #loading-bar .fill { height: 100%; width: 30%; background: var(--accent); transform: translateX(-100%); }
+  #loading-bar.active .fill { animation: loading-slide 1s ease-in-out infinite; }
+  @keyframes loading-slide { 0% { transform: translateX(-100%); } 50% { transform: translateX(150%); } 100% { transform: translateX(350%); } }
   #topbar { height: 56px; flex-shrink: 0; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 24px; gap: 12px; }
   #topbar .crumb { font-size: 13px; color: var(--text-sub); }
   #topbar .crumb strong { color: var(--text); }
@@ -56,6 +60,23 @@
   .changelog-entry .date { color: var(--text-sub); font-size: 11px; margin-left: 8px; }
   .changelog-entry h4 { margin: 4px 0 8px; font-size: 14px; }
   .changelog-entry ul { margin: 0; padding-left: 18px; font-size: 12.5px; line-height: 1.7; }
+  .pager { display: flex; align-items: center; gap: 10px; margin-top: 14px; font-size: 12.5px; color: var(--text-sub); }
+  .pager button { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); font-size: 12px; font-weight: 600; color: var(--text); cursor: pointer; }
+  .pager button:disabled { opacity: .4; cursor: default; }
+  .toolbar { display: flex; gap: 8px; margin-bottom: 14px; }
+  .toolbar button, .toolbar label.btn-like {
+    padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface);
+    font-size: 12.5px; font-weight: 600; color: var(--text); cursor: pointer;
+  }
+  .toolbar .primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .toolbar .danger { color: #dc2626; border-color: #fecaca; }
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(15,23,42,.5); display: flex; align-items: center; justify-content: center; z-index: 500; }
+  .modal-card { width: 420px; background: var(--surface); border-radius: 14px; padding: 24px; box-shadow: 0 20px 50px rgba(0,0,0,.3); }
+  .modal-card h3 { margin: 0 0 16px; font-size: 15px; }
+  .modal-card label { display: block; font-size: 12px; font-weight: 600; color: var(--text-sub); margin: 12px 0 4px; }
+  .modal-card input, .modal-card select { width: 100%; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--border); font-size: 13px; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+  .row-check { width: 32px; }
 
   table { width: 100%; border-collapse: collapse; background: var(--surface); border-radius: 12px; overflow: hidden; border: 1px solid var(--border); }
   th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-sub); background: #f8fafc; padding: 10px 14px; border-bottom: 1px solid var(--border); }
@@ -105,6 +126,7 @@
     <button class="nav-btn" id="btn-logout">Log Out</button>
   </div>
   <div id="shell">
+    <div id="loading-bar"><div class="fill"></div></div>
     <div id="topbar">
       <div class="crumb" id="crumb">Dashboard</div>
       <div class="spacer"></div>

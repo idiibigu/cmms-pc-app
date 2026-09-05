@@ -12,4 +12,6 @@ contextBridge.exposeInMainWorld('eeisDesktop', {
   api: (path, method, body) => ipcRenderer.invoke('api-request', { path, method, body }),
   setWindowIcon: (logoUrl) => ipcRenderer.invoke('set-window-icon', logoUrl),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  exportAndSave: (apiPath, suggestedName) => ipcRenderer.invoke('export-and-save', { apiPath, suggestedName }),
+  pickAndImport: (module, projectId) => ipcRenderer.invoke('pick-and-import', { module, projectId }),
 });

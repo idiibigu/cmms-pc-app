@@ -13,8 +13,9 @@
 // this desktop app needs no cookie jar at all: log in once via
 // POST /api/auth.php, keep the returned token, and send it as a Bearer
 // header on every request after that.
-const { app, BrowserWindow, ipcMain, net, Menu, dialog, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, net, Menu, dialog, nativeImage, Notification } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const { autoUpdater } = require('electron-updater');
 const Store = require('./store');
 
@@ -200,6 +201,92 @@ ipcMain.handle('set-window-icon', async (_event, logoUrl) => {
 
 ipcMain.handle('get-app-version', () => app.getVersion());
 
+// ── Export: download a file (api/export.php or api/export_import_engine.php
+// via export.php) and let the user pick where to save it ──────────────────
+ipcMain.handle('export-and-save', async (_event, { apiPath, suggestedName }) => {
+  const appUrl = Store.get('appUrl');
+  const token = Store.get('token');
+  if (!appUrl || !token) return { error: 'Not connected.' };
+  try {
+    const res = await fetch(appUrl + '/api' + apiPath, {
+      headers: { 'Authorization': 'Bearer ' + token },
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      return { error: data.error || ('Export failed (' + res.status + ')') };
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+      defaultPath: suggestedName || 'export.xlsx',
+    });
+    if (canceled || !filePath) return { canceled: true };
+    fs.writeFileSync(filePath, buf);
+    return { success: true, filePath };
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
+// ── Import: pick a file, upload it to api/import.php (the same
+// ExportImportEngine used by the web app — add/update only, see
+// api/export_import_engine.php's commit()) ────────────────────────────────
+ipcMain.handle('pick-and-import', async (_event, { module, projectId }) => {
+  const appUrl = Store.get('appUrl');
+  const token = Store.get('token');
+  if (!appUrl || !token) return { error: 'Not connected.' };
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    filters: [{ name: 'Spreadsheets', extensions: ['xlsx', 'xls', 'csv'] }],
+    properties: ['openFile'],
+  });
+  if (canceled || !filePaths[0]) return { canceled: true };
+  try {
+    const buf = fs.readFileSync(filePaths[0]);
+    const form = new FormData();
+    form.append('module', module);
+    if (projectId) form.append('project_id', String(projectId));
+    form.append('file', new Blob([buf]), path.basename(filePaths[0]));
+    const res = await fetch(appUrl + '/api/import.php', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token },
+      body: form,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { error: data.error || ('Import failed (' + res.status + ')') };
+    return { data };
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
+// ── Windows/OS notifications ───────────────────────────────────────────
+// Polls the same unread-notifications endpoint the web app uses; fires a
+// native OS notification only when the unread count goes UP since the
+// last check (not on every poll), so re-opening the app doesn't spam a
+// notification per already-seen item.
+let lastUnreadCount = 0;
+async function pollNotifications() {
+  const appUrl = Store.get('appUrl');
+  const token = Store.get('token');
+  if (!appUrl || !token) return;
+  try {
+    const res = await fetch(appUrl + '/api/notifications.php?action=unread_count', {
+      headers: { 'Authorization': 'Bearer ' + token },
+    });
+    const data = await res.json().catch(() => ({}));
+    const count = data.unread_count ?? 0;
+    if (count > lastUnreadCount && Notification.isSupported()) {
+      new Notification({
+        title: 'idiibi CMMS',
+        body: count === 1 ? 'You have 1 new notification.' : `You have ${count} new notifications.`,
+      }).show();
+    }
+    lastUnreadCount = count;
+  } catch (_) {
+    // Silent — offline or session expired; the next successful api-request
+    // call will already handle re-showing the login screen if needed.
+  }
+}
+
 ipcMain.handle('logout', async () => {
   Store.set('token', '');
   showLogin();
@@ -243,6 +330,8 @@ app.whenReady().then(() => {
   buildMenu();
   createWindow();
   initAutoUpdater();
+  pollNotifications();
+  setInterval(pollNotifications, 60000);
 });
 
 app.on('window-all-closed', () => {
