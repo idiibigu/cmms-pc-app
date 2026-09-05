@@ -285,21 +285,101 @@ async function viewEquipment() {
 async function viewTasks() {
   setCrumb('Work Orders');
   main.innerHTML = '<h2>Work Orders</h2><div class="sub">Every work order across all projects</div><div class="state-msg">Loading…</div>';
-  const res = await apiCall('/tasks.php?all=1');
+  const [res, milestonesRes, categoriesRes, projectsRes] = await Promise.all([
+    apiCall('/tasks.php?all=1'),
+    apiCall('/milestones.php'),
+    apiCall('/task_categories.php'),
+    apiCall('/projects.php'),
+  ]);
   if (res?.error) { main.innerHTML = '<h2>Work Orders</h2><div class="error-msg">' + esc(res.error) + '</div>'; return; }
-  const rows = (res.data?.data || []).map((t) => `
+  const tasks = res.data?.data || [];
+  const milestones = milestonesRes.data?.data || [];
+  const categories = categoriesRes.data?.data || [];
+  const projects = projectsRes.data?.data || [];
+
+  const canAdd = can('add_tasks');
+  const canEdit = can('edit_tasks');
+  const canDelete = can('delete_tasks');
+
+  const rows = tasks.map((t) => `
     <tr>
       <td>${esc(t.heading)}</td>
       <td><span class="badge">${esc(t.status)}</span></td>
       <td>${esc(t.priority || '—')}</td>
       <td>${esc(t.category_name || '—')}</td>
       <td>${esc(t.due_date || '—')}</td>
+      <td>
+        ${canEdit ? `<button class="btn-edit-task" data-id="${esc(t.id)}">Edit</button>` : ''}
+        ${canDelete ? `<button class="btn-delete-task" data-id="${esc(t.id)}">Delete</button>` : ''}
+      </td>
     </tr>
   `);
+  const toolbar = canAdd ? '<div class="toolbar"><button id="btn-add-task" class="primary">+ Add Work Order</button></div>' : '';
   main.innerHTML = '<h2>Work Orders</h2><div class="sub">Every work order across all projects</div>'
-    + ioToolbarHtml('tasks') + '<div id="list"></div>';
-  mountPagedTable(document.getElementById('list'), ['Title', 'Status', 'Priority', 'Category', 'Due Date'], rows);
+    + toolbar + ioToolbarHtml('tasks') + '<div id="list"></div>';
+  mountPagedTable(document.getElementById('list'), ['Title', 'Status', 'Priority', 'Category', 'Due Date', 'Actions'], rows);
   wireIoToolbar(viewTasks);
+
+  const projectOptions = (selected) => '<option value="">—</option>' + projects.map((p) => `<option value="${esc(p.id)}" ${String(p.id) === String(selected) ? 'selected' : ''}>${esc(p.project_name)}</option>`).join('');
+  const milestoneOptions = (selected) => '<option value="">—</option>' + milestones.map((m) => `<option value="${esc(m.id)}" ${String(m.id) === String(selected) ? 'selected' : ''}>${esc(m.milestone_title)}</option>`).join('');
+  const categoryOptions = (selected) => '<option value="">—</option>' + categories.map((c) => `<option value="${esc(c.id)}" ${String(c.id) === String(selected) ? 'selected' : ''}>${esc(c.name_en)}</option>`).join('');
+
+  const taskFormFields = (t = {}) => `
+    <label>Heading</label><input name="heading" value="${esc(t.heading || '')}" required>
+    <label>Description</label><input name="description" value="${esc(t.description || '')}">
+    <label>Project</label><select name="project_id" required>${projectOptions(t.project_id)}</select>
+    <label>Equipment</label><select name="milestone_id">${milestoneOptions(t.milestone_id)}</select>
+    <label>Category</label><select name="task_category_id">${categoryOptions(t.task_category_id)}</select>
+    <label>Priority</label>
+    <select name="priority">
+      ${['low', 'medium', 'high'].map((p) => `<option value="${p}" ${(t.priority || 'medium') === p ? 'selected' : ''}>${p[0].toUpperCase() + p.slice(1)}</option>`).join('')}
+    </select>
+    <label>Status</label>
+    <select name="status">
+      <option value="incomplete" ${(t.status || 'incomplete') !== 'completed' ? 'selected' : ''}>Incomplete</option>
+      <option value="completed" ${t.status === 'completed' ? 'selected' : ''}>Completed</option>
+    </select>
+    <label>Due Date</label><input name="due_date" type="date" value="${esc(t.due_date || '')}">
+  `;
+
+  document.getElementById('btn-add-task')?.addEventListener('click', () => {
+    openModal('Add Work Order', taskFormFields(), async (data) => {
+      const r = await apiCall('/tasks.php', 'POST', {
+        heading: data.heading, description: data.description, project_id: Number(data.project_id),
+        milestone_id: data.milestone_id ? Number(data.milestone_id) : null,
+        task_category_id: data.task_category_id ? Number(data.task_category_id) : null,
+        priority: data.priority, status: data.status, due_date: data.due_date || null,
+      });
+      if (r?.error) throw new Error(r.error);
+      viewTasks();
+    });
+  });
+
+  main.querySelectorAll('.btn-edit-task').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const t = tasks.find((x) => String(x.id) === btn.dataset.id);
+      if (!t) return;
+      openModal('Edit Work Order', taskFormFields(t), async (data) => {
+        const r = await apiCall('/tasks.php?id=' + btn.dataset.id, 'PUT', {
+          heading: data.heading, description: data.description, project_id: Number(data.project_id),
+          milestone_id: data.milestone_id ? Number(data.milestone_id) : null,
+          task_category_id: data.task_category_id ? Number(data.task_category_id) : null,
+          priority: data.priority, status: data.status, due_date: data.due_date || null,
+        });
+        if (r?.error) throw new Error(r.error);
+        viewTasks();
+      });
+    });
+  });
+
+  main.querySelectorAll('.btn-delete-task').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Delete this work order? This cannot be undone.')) return;
+      const r = await apiCall('/tasks.php?id=' + btn.dataset.id, 'DELETE');
+      if (r?.error) { alert('Delete failed: ' + r.error); return; }
+      viewTasks();
+    });
+  });
 }
 
 // Work Order Categories — full CRUD (add/edit/delete), gated on the same
