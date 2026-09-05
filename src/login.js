@@ -9,10 +9,12 @@ const btn = document.getElementById('btn-login');
   if (res?.data) {
     const b = res.data;
     if (b.company_name) document.getElementById('company-name').textContent = b.company_name;
+    if (b.primary_color) document.documentElement.style.setProperty('--accent', b.primary_color);
     if (b.logo_url) {
       const img = document.getElementById('logo');
       img.src = b.logo_url;
       img.hidden = false;
+      window.eeisDesktop.setWindowIcon(b.logo_url);
     }
   }
 })();

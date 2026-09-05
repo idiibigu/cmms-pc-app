@@ -1,13 +1,38 @@
 {
-  "name": "eeis-desktop",
-  "version": "0.1.0",
-  "description": "EEIS CMMS desktop shell — Electron wrapper around the existing web app. See .claude/skills/eeis-desktop-app/SKILL.md in the main project for the full plan.",
+  "name": "idiibi-cmms-desktop",
+  "version": "1.0.0",
+  "description": "idiibi CMMS desktop app — native screens calling the same JSON APIs as the web app. See .claude/skills/eeis-desktop-app/SKILL.md in the main project for the full plan.",
   "main": "src/main.js",
   "private": true,
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "dist": "electron-builder --publish=never",
+    "release": "electron-builder --publish=always"
+  },
+  "build": {
+    "appId": "com.idiibi.cmms.desktop",
+    "productName": "idiibi CMMS",
+    "files": ["src/**/*", "package.json"],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "idiibigu",
+        "repo": "cmms-pc-app"
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   },
   "devDependencies": {
-    "electron": "^31.0.0"
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.0"
   }
 }

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <title>idiibi CMMS — Sign In</title>
 <style>
+  :root { --accent: #2563eb; }
   * { box-sizing: border-box; }
   body {
     margin: 0; height: 100vh; display: flex; align-items: center; justify-content: center;
@@ -18,12 +19,12 @@
     width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid #334155;
     background: #0f172a; color: #f1f5f9; font-size: 14px; margin-bottom: 16px;
   }
-  input:focus { outline: none; border-color: #2563eb; }
+  input:focus { outline: none; border-color: var(--accent); }
   button {
-    width: 100%; padding: 12px; border: 0; border-radius: 10px; background: #2563eb;
-    color: #fff; font-size: 14px; font-weight: 600; cursor: pointer;
+    width: 100%; padding: 12px; border: 0; border-radius: 10px; background: var(--accent);
+    color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; transition: filter .12s ease;
   }
-  button:hover { background: #1d4ed8; }
+  button:hover { filter: brightness(0.88); }
   button:disabled { opacity: .6; cursor: default; }
   .error { color: #f87171; font-size: 12px; margin-top: 12px; min-height: 16px; }
 </style>

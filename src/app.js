@@ -14,12 +14,19 @@ async function loadBranding() {
   if (res?.data?.data) {
     const b = res.data.data;
     if (b.company_name) document.getElementById('company-name').textContent = b.company_name;
+    if (b.primary_color) document.documentElement.style.setProperty('--accent', b.primary_color);
     if (b.logo_url) {
       const img = document.getElementById('logo');
       img.src = b.logo_url;
       img.hidden = false;
+      window.eeisDesktop.setWindowIcon(b.logo_url);
     }
   }
+}
+
+function setCrumb(text) {
+  const el = document.getElementById('crumb');
+  if (el) el.innerHTML = text;
 }
 
 function renderTable(headers, rows) {
@@ -90,19 +97,75 @@ async function viewTasks() {
 }
 
 async function viewProjects() {
-  main.innerHTML = '<h2>Projects</h2><div class="sub">All projects in the company</div><div class="state-msg">Loading…</div>';
+  setCrumb('Projects');
+  main.innerHTML = '<h2>Projects</h2><div class="sub">All projects in the company — click one to see everything inside it</div><div class="state-msg">Loading…</div>';
   const res = await window.eeisDesktop.api('/projects.php');
   if (res?.error) { main.innerHTML = '<h2>Projects</h2><div class="error-msg">' + esc(res.error) + '</div>'; return; }
   const rows = (res.data?.data || []).map((p) => `
-    <tr>
+    <tr class="clickable" data-project-id="${esc(p.id)}" data-project-name="${esc(p.project_name)}">
       <td>${esc(p.project_name)}</td>
       <td><span class="badge">${esc(p.status)}</span></td>
       <td>${esc(p.start_date || '—')}</td>
       <td>${esc(p.deadline || p.end_date || '—')}</td>
     </tr>
   `);
-  main.innerHTML = '<h2>Projects</h2><div class="sub">All projects in the company</div>' +
+  main.innerHTML = '<h2>Projects</h2><div class="sub">All projects in the company — click one to see everything inside it</div>' +
     renderTable(['Name', 'Status', 'Start', 'Deadline'], rows);
+  main.querySelectorAll('tr[data-project-id]').forEach((tr) => {
+    tr.addEventListener('click', () => openProjectDetail(tr.dataset.projectId, tr.dataset.projectName));
+  });
+}
+
+// Drill-down: everything linked to one project (equipment, work orders,
+// events, fire alarm, meters) on a single page — this is the "open a
+// project and see what's inside it" view.
+async function openProjectDetail(projectId, projectName) {
+  setActiveNav(null);
+  setCrumb('Projects &rsaquo; <strong>' + esc(projectName) + '</strong>');
+  main.innerHTML = '<div class="back-link" id="back-to-projects">&larr; Back to Projects</div>'
+    + '<h2>' + esc(projectName) + '</h2><div class="sub">Everything linked to this project</div>'
+    + '<div class="state-msg">Loading…</div>';
+  document.getElementById('back-to-projects').addEventListener('click', () => { setActiveNav('projects'); viewProjects(); });
+
+  const [eq, tasks, events, fire, meters] = await Promise.all([
+    window.eeisDesktop.api('/milestones.php?project_id=' + projectId),
+    window.eeisDesktop.api('/tasks.php?project_id=' + projectId),
+    window.eeisDesktop.api('/events.php?action=list&project_id=' + projectId),
+    window.eeisDesktop.api('/fire-alarm.php?action=list&project_id=' + projectId),
+    window.eeisDesktop.api('/utility-meters.php?action=meters&project_id=' + projectId),
+  ]);
+
+  const section = (title, headers, rows) => `
+    <div class="section-block">
+      <h3>${esc(title)} (${rows.length})</h3>
+      ${renderTable(headers, rows)}
+    </div>
+  `;
+
+  const eqRows = (eq.data?.data || []).map((m) => `
+    <tr><td>${esc(m.milestone_title)}</td><td><span class="badge">${esc(m.status)}</span></td><td>${esc(m.equipment_code || '—')}</td></tr>
+  `);
+  const taskRows = (tasks.data?.data || []).map((t) => `
+    <tr><td>${esc(t.heading)}</td><td><span class="badge">${esc(t.status)}</span></td><td>${esc(t.priority || '—')}</td></tr>
+  `);
+  const eventRows = (events.data?.data || []).map((ev) => `
+    <tr><td>${esc(ev.title)}</td><td><span class="badge">${esc(ev.severity)}</span></td><td><span class="badge">${esc(ev.status)}</span></td></tr>
+  `);
+  const fireRows = (fire.data?.data || []).map((f) => `
+    <tr><td>${esc(f.alarm_type)}</td><td>${esc(f.location_area || '—')}</td><td><span class="badge">${esc(f.status)}</span></td></tr>
+  `);
+  const meterRows = (meters.data?.data || []).map((m) => `
+    <tr><td>${esc(m.label)}</td><td><span class="badge">${esc(m.meter_type)}</span></td><td>${m.is_active ? 'Active' : 'Inactive'}</td></tr>
+  `);
+
+  main.innerHTML = '<div class="back-link" id="back-to-projects">&larr; Back to Projects</div>'
+    + '<h2>' + esc(projectName) + '</h2><div class="sub">Everything linked to this project</div>'
+    + section('Equipment', ['Title', 'Status', 'Code'], eqRows)
+    + section('Work Orders', ['Title', 'Status', 'Priority'], taskRows)
+    + section('Project Events', ['Title', 'Severity', 'Status'], eventRows)
+    + section('Fire Alarm', ['Type', 'Location', 'Status'], fireRows)
+    + section('Utility Meters', ['Label', 'Type', 'Status'], meterRows);
+  document.getElementById('back-to-projects').addEventListener('click', () => { setActiveNav('projects'); viewProjects(); });
 }
 
 async function viewEvents() {

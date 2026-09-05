@@ -10,4 +10,5 @@ contextBridge.exposeInMainWorld('eeisDesktop', {
   getPublicBranding: () => ipcRenderer.invoke('get-public-branding'),
   logout: () => ipcRenderer.invoke('logout'),
   api: (path, method, body) => ipcRenderer.invoke('api-request', { path, method, body }),
+  setWindowIcon: (logoUrl) => ipcRenderer.invoke('set-window-icon', logoUrl),
 });

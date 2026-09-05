@@ -13,11 +13,42 @@
 // this desktop app needs no cookie jar at all: log in once via
 // POST /api/auth.php, keep the returned token, and send it as a Bearer
 // header on every request after that.
-const { app, BrowserWindow, ipcMain, net, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, net, Menu, dialog, nativeImage } = require('electron');
 const path = require('path');
+const { autoUpdater } = require('electron-updater');
 const Store = require('./store');
 
 let mainWindow = null;
+
+// ── Auto-update ───────────────────────────────────────────────────────────
+// Checks GitHub Releases on https://github.com/idiibigu/cmms-pc-app (see
+// package.json's "build.publish") for a newer tagged release than the
+// version currently installed, downloads it in the background, and
+// installs on next restart. Publishing a new version means: bump
+// package.json's "version", then run `npm run release` (requires a
+// GH_TOKEN env var with repo write access) — that builds the installer
+// AND creates/updates the GitHub Release electron-updater checks against.
+// Does nothing during `npm start` (unpackaged dev runs) since autoUpdater
+// requires an actual packaged app.
+function initAutoUpdater() {
+  autoUpdater.autoDownload = true;
+  autoUpdater.on('update-downloaded', (info) => {
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: 'Update ready',
+      message: `Version ${info.version} has been downloaded. Restart now to install it?`,
+      buttons: ['Restart now', 'Later'],
+    }).then((result) => {
+      if (result.response === 0) autoUpdater.quitAndInstall();
+    });
+  });
+  autoUpdater.on('error', (err) => {
+    console.error('Auto-update error:', err.message);
+  });
+  autoUpdater.checkForUpdates().catch(() => {
+    // Silent — most likely just a dev/unpackaged run or no internet.
+  });
+}
 
 function showUrlPrompt() {
   if (mainWindow) mainWindow.loadFile(path.join(__dirname, 'url-prompt.html'));
@@ -43,6 +74,15 @@ function buildMenu() {
         {
           label: 'Log Out',
           click: () => { Store.set('token', ''); showLogin(); },
+        },
+        { type: 'separator' },
+        {
+          label: 'Check for Updates…',
+          click: () => {
+            autoUpdater.checkForUpdates().catch((e) => {
+              dialog.showMessageBox(mainWindow, { type: 'error', message: 'Could not check for updates: ' + e.message });
+            });
+          },
         },
         { type: 'separator' },
         { role: 'quit' },
@@ -137,6 +177,27 @@ ipcMain.handle('auth-login', async (_event, { username, password }) => {
   }
 });
 
+// The taskbar/window icon follows the company's own logo from branding,
+// same as the color scheme (set client-side from the same branding
+// response — see app.js/login.js). Only affects THIS running window, not
+// the packaged .exe's file icon (that's baked in at build time and shared
+// across all companies using the installer) — good enough for "the app
+// looks like our company" while it's open, which is what was asked for.
+ipcMain.handle('set-window-icon', async (_event, logoUrl) => {
+  if (!mainWindow || !logoUrl) return false;
+  try {
+    const res = await fetch(logoUrl);
+    if (!res.ok) return false;
+    const buf = Buffer.from(await res.arrayBuffer());
+    const img = nativeImage.createFromBuffer(buf);
+    if (img.isEmpty()) return false;
+    mainWindow.setIcon(img);
+    return true;
+  } catch (_) {
+    return false;
+  }
+});
+
 ipcMain.handle('logout', async () => {
   Store.set('token', '');
   showLogin();
@@ -179,6 +240,7 @@ ipcMain.handle('api-request', async (_event, { path: apiPath, method, body }) =>
 app.whenReady().then(() => {
   buildMenu();
   createWindow();
+  initAutoUpdater();
 });
 
 app.on('window-all-closed', () => {
