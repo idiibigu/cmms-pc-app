@@ -32,7 +32,7 @@ async function viewDashboard() {
   main.innerHTML = '<h2>Dashboard</h2><div class="sub">Live overview of your company</div><div class="state-msg">Loading…</div>';
   const [eq, tasks, projects] = await Promise.all([
     window.eeisDesktop.api('/milestones.php'),
-    window.eeisDesktop.api('/tasks.php'),
+    window.eeisDesktop.api('/tasks.php?all=1'),
     window.eeisDesktop.api('/projects.php'),
   ]);
   if (eq?.error || tasks?.error || projects?.error) {
@@ -75,7 +75,7 @@ async function viewEquipment() {
 
 async function viewTasks() {
   main.innerHTML = '<h2>Work Orders</h2><div class="sub">Every work order across all projects</div><div class="state-msg">Loading…</div>';
-  const res = await window.eeisDesktop.api('/tasks.php');
+  const res = await window.eeisDesktop.api('/tasks.php?all=1');
   if (res?.error) { main.innerHTML = '<h2>Work Orders</h2><div class="error-msg">' + esc(res.error) + '</div>'; return; }
   const rows = (res.data?.data || []).map((t) => `
     <tr>
